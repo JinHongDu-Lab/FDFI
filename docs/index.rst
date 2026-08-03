@@ -16,8 +16,13 @@ implements both OT-based DFI and flow-based FDFI methods.
 Key Features
 ------------
 
-- **Multiple Explainer Types**: OTExplainer, EOTExplainer, and FlowExplainer (TreeExplainer/LinearExplainer/KernelExplainer coming soon)
-- **OT-Based DFI**: Gaussian OT (OTExplainer) and Entropic OT (EOTExplainer)
+- **Three explainer variants**, all model-agnostic and sharing one API:
+  :class:`~fdfi.explainers.OTExplainer` (Gaussian OT — the fast default),
+  :class:`~fdfi.explainers.EOTExplainer` (entropic OT — non-Gaussian and
+  mixed-type data), and :class:`~fdfi.explainers.FlowExplainer` (normalizing
+  flows — complex non-linear dependence)
+- **Cross-fitted inference**: :class:`~fdfi.explainers.Crossfitting` wraps any
+  variant for valid standard errors at small sample sizes
 - **Shared Diagnostics**: Latent independence (dCor) and distribution fidelity (MMD) checks for OT/EOT/Flow
 - **Visualization**: Summary, waterfall, force, dependence, CI, and diagnostics plots
 - **Statistical Inference**: Confidence intervals, one-sided tests, FDR correction, and group-level importance
@@ -26,11 +31,11 @@ Key Features
 
 .. note::
 
-   **New in 0.0.8**: :func:`~fdfi.plots.confidence_interval_plot` now supports
-   one-sided confidence intervals.  When ``conf_int()`` is called with
-   ``alternative='greater'`` or ``alternative='less'``, the plot renders the
-   open bound as a stub with a native Matplotlib caret, following forest-plot
-   conventions.  See :doc:`tutorials/confidence_intervals` for worked examples.
+   Recent additions include configurable loss functions (any regression or
+   binary-classification loss, or a custom callable) and one-sided confidence
+   intervals in :func:`~fdfi.plots.confidence_interval_plot`.  See the
+   :doc:`changelog` for the full history and
+   :doc:`tutorials/confidence_intervals` for worked examples.
 
 Quick Example
 -------------

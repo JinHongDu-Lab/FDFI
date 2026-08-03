@@ -26,9 +26,9 @@ Calling any working explainer returns a ``dict`` with the following keys:
      - Description
    * - ``phi_X``
      - ``(d,)``
-     - Mean UEIF (Unit Effect Independent Feature) in the **original feature
-       space**.  Summarises how much each original feature contributes to
-       prediction variance across the test set.
+     - Mean UEIF (uncentered efficient influence function) in the **original
+       feature space**.  Summarises how much each original feature contributes
+       to prediction variance across the test set.
    * - ``se_X``
      - ``(d,)``
      - Standard error of ``phi_X`` (across test samples).  Use this for error

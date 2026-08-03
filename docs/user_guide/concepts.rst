@@ -10,7 +10,7 @@ What is Feature Importance?
 Feature importance quantifies **how much each input feature contributes** to a 
 model's predictions. Given a model :math:`f(x)` and an input 
 :math:`x = (x_1, ..., x_d)`, we want to compute attributions 
-:math:`\\phi = (\\phi_1, ..., \\phi_d)` where :math:`\\phi_j` represents the 
+:math:`\phi = (\phi_1, ..., \phi_d)` where :math:`\phi_j` represents the 
 importance of feature :math:`j`.
 
 SHAP and Shapley Values
@@ -20,7 +20,7 @@ SHAP (SHapley Additive exPlanations) computes feature importance using
 **Shapley values** from cooperative game theory. For a prediction :math:`f(x)`, 
 SHAP values satisfy:
 
-1. **Efficiency**: :math:`\\sum_j \\phi_j = f(x) - E[f(X)]`
+1. **Efficiency**: :math:`\sum_j \phi_j = f(x) - E[f(X)]`
 2. **Symmetry**: Features with equal contributions get equal attributions
 3. **Null**: Features that don't affect the output get zero attribution
 4. **Linearity**: Attributions combine linearly for ensemble models
@@ -38,15 +38,16 @@ to create counterfactual distributions. The key insight is:
    feature j comes from the data distribution vs. when it's replaced by 
    an independent sample.*
 
-Mathematically, let :math:`Z = L^{-1}(X - \\mu)` be the whitened 
-(disentangled) representation where features are uncorrelated. The 
-**Unit Effect Independent Feature** (UEIF) for feature :math:`j` is:
+Mathematically, let :math:`Z = L^{-1}(X - \mu)` be the whitened
+(disentangled) representation where features are uncorrelated. Importance is
+measured by the **uncentered efficient influence function** (UEIF), which for
+feature :math:`j` is:
 
 .. math::
 
-   \\text{UEIF}_j(x) = \\left( f(x) - E[f(\\tilde{X}^{(j)})] \\right)^2
+   \text{UEIF}_j(x) = \left( f(x) - E[f(\tilde{X}^{(j)})] \right)^2
 
-where :math:`\\tilde{X}^{(j)}` has feature :math:`j` replaced with an 
+where :math:`\tilde{X}^{(j)}` has feature :math:`j` replaced with an 
 independent sample from the marginal distribution.
 
 Gaussian vs Entropic OT
@@ -57,7 +58,7 @@ DFI provides two main approaches:
 **Gaussian OT (OTExplainer)**
 
 - Assumes data is approximately Gaussian
-- Uses closed-form Gaussian optimal transport: :math:`Z = L^{-1}(X - \\mu)`
+- Uses closed-form Gaussian optimal transport: :math:`Z = L^{-1}(X - \mu)`
 - Fast and stable
 - Best for continuous, roughly normal data
 

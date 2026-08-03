@@ -170,20 +170,27 @@ sample, inducing finite-sample bias in the attributions.  Cross-fitting
 addresses this by alternating which half of the data is used to fit the OT
 map vs. evaluate the UEIFs:
 
+Cross-fitting is provided by the :class:`~fdfi.explainers.Crossfitting` wrapper,
+which accepts any explainer class:
+
 .. code-block:: python
 
-   from fdfi.explainers import OTExplainer
+   from fdfi.explainers import Crossfitting, OTExplainer
 
-   explainer = OTExplainer(
+   cf = Crossfitting(
        model.predict,
        data=X_background,
+       explainer_class=OTExplainer,   # or EOTExplainer / FlowExplainer
+       cv=5,                          # 5-fold KFold, or any sklearn splitter
        nsamples=100,
-       crossfit=True,      # enable cross-fitting
-       n_folds=5,          # number of cross-fitting folds (default 5)
+       random_state=42,
    )
+   results = cf()                     # cross-fit on X_background
+   ci = cf.conf_int(alpha=0.05)
 
 Cross-fitting is especially helpful when ``len(X_background)`` is small
-(< 200) and the number of features is large.
+(< 200) and the number of features is large.  See
+:doc:`choosing_explainer` for the full list of ``Crossfitting`` options.
 
 ----
 

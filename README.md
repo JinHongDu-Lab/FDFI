@@ -4,8 +4,11 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/fdfi?label=pypi&color=orange)](https://pypi.org/project/fdfi)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/fdfi?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=BRIGHTGREEN&left_text=downloads)](https://pepy.tech/projects/fdfi)
+[![Documentation](https://readthedocs.org/projects/fdfi/badge/?version=latest)](https://fdfi.readthedocs.io/en/latest/)
 
 A Python library for computing feature importance using disentangled methods, inspired by SHAP.
+
+📖 **[Read the documentation](https://fdfi.readthedocs.io/en/latest/)**
 
 Current release: `0.0.9`
 
@@ -15,9 +18,9 @@ FDFI (Flow-Disentangled Feature Importance) is a Python module that provides int
 
 ## Features
 
-- 🎯 **Multiple Explainer Types**: Tree, Linear, and Kernel explainers for different model types
-- 🧭 **OT-Based DFI**: Gaussian OT (OTExplainer) and Entropic OT (EOTExplainer)
-- 🌊 **Flow-DFI**: FlowExplainer with CPI and SCPI methods for non-Gaussian data
+- 🎯 **Three explainer variants**, all model-agnostic and sharing one API:
+  `OTExplainer` (Gaussian OT — fast default), `EOTExplainer` (entropic OT — non-Gaussian and mixed-type data), and `FlowExplainer` (normalizing flows — complex non-linear dependence)
+- 🔁 **Cross-fitted inference**: `Crossfitting` wraps any variant for valid standard errors at small sample sizes
 - 📊 **Rich Visualizations**: Summary, waterfall, force, and dependence plots
 - 🔧 **Easy to Use**: Simple API similar to SHAP
 - 🧪 **Statistical Inference**: Confidence intervals and multiple testing correction (FDR/FWER)
@@ -100,9 +103,9 @@ confidence_interval_plot(ci, feature_names=feature_names, show=False)
 diagnostics_plot(explainer.diagnostics, feature_names=feature_names, show=False)
 ```
 
-### CI Defaults in v0.0.2
+### Confidence-interval defaults
 
-By default, `conf_int()` now uses:
+By default, `conf_int()` uses:
 
 - `var_floor_method="mixture"`
 - `margin_method="mixture"`
@@ -158,7 +161,7 @@ results = explainer(X_test)
 ci = explainer.conf_int(alpha=0.05, target="Z", alternative="two-sided")
 ```
 
-### Explainer diagnostics (new in v0.0.2)
+### Explainer diagnostics
 
 Disentangled explainers (`OTExplainer`, `EOTExplainer`, and `FlowExplainer`) report two diagnostics with qualitative labels (GOOD / MODERATE / POOR) using consistent `[FDFI][DIAG]` logging:
 
@@ -202,14 +205,14 @@ FDFI/
 ├── fdfi/                  # Main package directory
 │   ├── __init__.py       # Package initialization
 │   ├── explainers.py     # Explainer classes
+│   ├── losses.py         # Loss registry (regression + classification)
+│   ├── models.py         # FlowMatchingModel for FlowExplainer
 │   ├── plots.py          # Visualization functions
 │   └── utils.py          # Utility functions
 ├── tests/                 # Test suite
-│   ├── test_explainers.py
-│   ├── test_plots.py
-│   └── test_utils.py
 ├── docs/                  # Documentation & tutorials
-│   └── tutorials/        # Jupyter notebook tutorials
+│   ├── tutorials/        # Jupyter notebook tutorials
+│   └── case_studies/     # Applied analyses on HIV-1 VRC01 neutralization data
 ├── pyproject.toml        # Package configuration
 └── README.md            # This file
 ```
@@ -238,7 +241,16 @@ pytest --cov=fdfi --cov-report=html
 
 ## Documentation
 
-Full documentation and tutorials are available in the `docs/` directory:
+Full documentation is hosted at **[fdfi.readthedocs.io](https://fdfi.readthedocs.io/en/latest/)**,
+or build it locally:
+
+```bash
+pip install -e ".[docs]"
+cd docs && python -m sphinx -b html . _build/html
+open _build/html/index.html
+```
+
+Tutorial notebooks live in `docs/tutorials/`:
 - [Quickstart Tutorial](docs/tutorials/quickstart.ipynb)
 - [OT Explainer Tutorial](docs/tutorials/ot_explainer.ipynb)
 - [EOT Explainer Tutorial](docs/tutorials/eot_explainer.ipynb)

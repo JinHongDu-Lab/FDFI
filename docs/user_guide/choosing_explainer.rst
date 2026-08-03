@@ -29,15 +29,16 @@ Quick Decision Guide
    * - Mixed data types
      - ``EOTExplainer`` with Gower
      - Use ``cost_metric="gower"``
-   * - Tree-based models
-     - ``TreeExplainer``
-     - Optimized for RF, XGBoost, etc.
-   * - Linear models
-     - ``LinearExplainer``
-     - Exact for linear models
    * - Any black-box model
-     - ``OTExplainer`` or ``KernelExplainer``
-     - Model-agnostic
+     - ``OTExplainer``
+     - Model-agnostic; needs only a ``f(X) -> y`` callable
+
+.. note::
+
+   ``TreeExplainer``, ``LinearExplainer``, and ``KernelExplainer`` are
+   placeholders that raise ``NotImplementedError``.  The three working
+   variants above are model-agnostic and apply to tree, linear, and
+   black-box models alike.
 
 OTExplainer (Gaussian OT)
 -------------------------
@@ -352,6 +353,7 @@ are critical
    results = cf()
 
 Hyperparameter Guidelines
+-------------------------
 
 nsamples
 ~~~~~~~~

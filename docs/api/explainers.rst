@@ -4,8 +4,12 @@ Explainers
 Overview
 --------
 
-The ``fdfi.explainers`` module provides classes for computing flow-disentangled 
-feature importance. The main classes are:
+The ``fdfi.explainers`` module provides classes for computing flow-disentangled
+feature importance.  Three explainer variants are implemented —
+``OTExplainer`` (Gaussian OT), ``EOTExplainer`` (entropic OT), and
+``FlowExplainer`` (normalizing flows) — plus the ``Crossfitting`` wrapper for
+cross-fitted inference.  ``TreeExplainer``, ``LinearExplainer``, and
+``KernelExplainer`` are placeholders that raise ``NotImplementedError``.
 
 Shared Methods
 --------------
@@ -191,11 +195,13 @@ The ``FlowExplainer`` implements Flow-Disentangled Feature Importance using
 normalizing flows. It supports both CPI (Conditional Permutation Importance) 
 and SCPI (Sobol-CPI). The key difference is the order of averaging:
 
-- **CPI**: Average the prediction first, then apply the loss: $L(Y, E_b[f(\tilde{X}_b)])$
-- **SCPI**: Apply the loss per sample first, then average: $E_b[L(Y, f(\tilde{X}_b))]$
+- **CPI**: Average the prediction first, then apply the loss:
+  :math:`L\big(Y, \mathbb{E}_b[f(\tilde{X}_b)]\big)`
+- **SCPI**: Apply the loss per sample first, then average:
+  :math:`\mathbb{E}_b\big[L\big(Y, f(\tilde{X}_b)\big)\big]`
 
 Both use the configurable ``loss`` (default squared error); for the squared-error
-loss, $\phi^{SCPI} = \phi^{CPI} + \mathrm{Var}_b[f(\tilde{X}_b)]$.
+loss, :math:`\phi^{SCPI} = \phi^{CPI} + \mathrm{Var}_b[f(\tilde{X}_b)]`.
 
 .. autoclass:: fdfi.explainers.FlowExplainer
    :members:

@@ -7,9 +7,13 @@ General Questions
 What does DFI stand for?
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-**D**\ isentangled **F**\ eature **I**\ mportance. It's a framework for 
-computing feature importance using optimal transport to create counterfactual 
-distributions. DFI includes both standard (Gaussian OT) and flow-based (entropic OT) methods.
+**D**\ isentangled **F**\ eature **I**\ mportance. It's a framework for
+computing feature importance by mapping correlated features to a latent space
+where they are independent, measuring importance there, and mapping the result
+back.  Three variants are implemented, differing only in how that map is built:
+Gaussian OT (:class:`~fdfi.explainers.OTExplainer`), entropic OT
+(:class:`~fdfi.explainers.EOTExplainer`), and normalizing flows
+(:class:`~fdfi.explainers.FlowExplainer`).  See :doc:`choosing_explainer`.
 
 How is DFI different from SHAP?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -186,11 +190,9 @@ How can I speed up explanation?
       X_bg = sample_background(X_train, n_samples=100)
       explainer = OTExplainer(model, data=X_bg)
 
-3. **Disable flow fitting** (if not needed):
-
-   .. code-block:: python
-
-      explainer = Explainer(model, data=X, fit_flow=False)
+3. **Use a cheaper explainer**: ``OTExplainer`` has a closed-form transport map
+   and is substantially faster than ``EOTExplainer`` (Sinkhorn iterations) or
+   ``FlowExplainer`` (flow training).
 
 Why is EOTExplainer slower than OTExplainer?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -205,17 +207,13 @@ Troubleshooting
 I get "Flow matching requires torch" error
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Install the flow dependencies:
+Only ``FlowExplainer`` requires PyTorch.  Install the flow dependencies:
 
 .. code-block:: bash
 
    pip install -e ".[flow]"
 
-Or disable flow fitting:
-
-.. code-block:: python
-
-   explainer = OTExplainer(model, data=X, fit_flow=False)
+Or switch to ``OTExplainer`` / ``EOTExplainer``, which never import torch.
 
 My confidence intervals are all negative to positive
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

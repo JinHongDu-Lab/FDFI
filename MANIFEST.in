@@ -4,8 +4,6 @@ include pyproject.toml
 
 recursive-include fdfi *.py
 recursive-include tests *.py
-recursive-include examples *.py
-recursive-include docs *.md
 
 prune docs/case_studies/data
 prune docs/case_studies/results

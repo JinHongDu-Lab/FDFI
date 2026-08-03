@@ -70,6 +70,14 @@ Thank you for your interest in contributing to FDFI!
 - Include docstrings with examples
 - Update README.md if needed
 
+Build the documentation locally:
+
+```bash
+cd docs
+python -m sphinx -b html . _build/html
+open _build/html/index.html
+```
+
 ## Pull Request Guidelines
 
 - Provide a clear description of the changes
