@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+### Removed
+- **`TreeExplainer`, `LinearExplainer`, and `KernelExplainer`**: these were placeholders whose `__call__` raised `NotImplementedError`, and they are gone from `fdfi.explainers` along with their API pages, user-guide sections, and tests. The three implemented variants (`OTExplainer`, `EOTExplainer`, `FlowExplainer`) are model-agnostic — they wrap any callable `f(X) -> y` — so tree ensembles, linear models, and arbitrary black boxes are already covered without a model-specific class. Code that imported these names will now raise `ImportError` instead of failing later at call time.
+
 ## [0.0.9] - 2026-07-13
 ### Added
 - **Arbitrary loss functions**: importance can now be defined through any per-sample loss instead of only the squared-error (L2) residual difference. New `fdfi/losses.py` registry provides regression losses (`squared_error`/`l2`, `absolute_error`/`l1`, `huber`, `pinball`) and binary-classification losses (`log_loss`/`bce`, `brier`, `zero_one`), plus `resolve_loss()`/`available_losses()`. Custom callables `loss(y_true, y_pred)` are also accepted.

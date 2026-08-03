@@ -45,9 +45,6 @@ def _resolve_version() -> str:
 __version__ = _resolve_version()
 __author__ = "FDFI Team"
 
-# Import main explainer classes when they are implemented
-# from .explainers import Explainer, TreeExplainer, LinearExplainer, KernelExplainer
-# from .plots import summary_plot, waterfall_plot, force_plot, dependence_plot
 from .explainers import Crossfitting
 from .losses import (
     resolve_loss,

@@ -35,10 +35,10 @@ Quick Decision Guide
 
 .. note::
 
-   ``TreeExplainer``, ``LinearExplainer``, and ``KernelExplainer`` are
-   placeholders that raise ``NotImplementedError``.  The three working
-   variants above are model-agnostic and apply to tree, linear, and
-   black-box models alike.
+   All three variants are model-agnostic — they wrap any callable
+   ``f(X) -> y`` — so there is no separate explainer to pick for tree
+   ensembles, linear models, or arbitrary black boxes. Choose based on the
+   *data* distribution, not the model type.
 
 OTExplainer (Gaussian OT)
 -------------------------
@@ -237,70 +237,6 @@ explainers:
    diag = explainer.diagnostics
    print(diag["latent_independence_median"], diag["latent_independence_label"])
    print(diag["distribution_fidelity_mmd"], diag["distribution_fidelity_label"])
-
-TreeExplainer
--------------
-
-**Best for:** Tree ensemble models (Random Forest, Gradient Boosting, XGBoost, 
-LightGBM)
-
-**Pros:**
-
-- Optimized tree traversal algorithms
-- Exact or approximate Shapley computation
-
-**Note:** Currently a placeholder—full implementation coming soon.
-
-.. code-block:: python
-
-   from fdfi.explainers import TreeExplainer
-   from sklearn.ensemble import RandomForestRegressor
-
-   model = RandomForestRegressor().fit(X_train, y_train)
-   explainer = TreeExplainer(model, data=X_background)
-
-LinearExplainer
----------------
-
-**Best for:** Linear models (Linear/Logistic Regression, Ridge, Lasso)
-
-**Pros:**
-
-- Exact Shapley values for linear models
-- Very fast computation
-
-**Note:** Currently a placeholder—full implementation coming soon.
-
-.. code-block:: python
-
-   from fdfi.explainers import LinearExplainer
-   from sklearn.linear_model import LinearRegression
-
-   model = LinearRegression().fit(X_train, y_train)
-   explainer = LinearExplainer(model, data=X_background)
-
-KernelExplainer
----------------
-
-**Best for:** Any model where you have no prior knowledge of structure
-
-**Pros:**
-
-- Works with any callable model
-- Fully model-agnostic
-
-**Cons:**
-
-- Slowest method
-- Can have high variance
-
-**Note:** Currently a placeholder—full implementation coming soon.
-
-.. code-block:: python
-
-   from fdfi.explainers import KernelExplainer
-
-   explainer = KernelExplainer(model.predict, data=X_background)
 
 Crossfitting (Cross-Fitted Inference)
 -------------------------------------

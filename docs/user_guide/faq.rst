@@ -58,13 +58,6 @@ continuous data problems.
    explainer = OTExplainer(model.predict, data=X_train, nsamples=50)
    results = explainer(X_test)
 
-Why does my explainer raise NotImplementedError?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Some explainers (TreeExplainer, LinearExplainer, KernelExplainer) are 
-placeholder implementations. Use **OTExplainer** or **EOTExplainer** for 
-working implementations.
-
 How do I handle categorical features?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

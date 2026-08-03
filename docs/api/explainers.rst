@@ -8,8 +8,9 @@ The ``fdfi.explainers`` module provides classes for computing flow-disentangled
 feature importance.  Three explainer variants are implemented —
 ``OTExplainer`` (Gaussian OT), ``EOTExplainer`` (entropic OT), and
 ``FlowExplainer`` (normalizing flows) — plus the ``Crossfitting`` wrapper for
-cross-fitted inference.  ``TreeExplainer``, ``LinearExplainer``, and
-``KernelExplainer`` are placeholders that raise ``NotImplementedError``.
+cross-fitted inference.  All three are model-agnostic: they wrap any callable
+``f(X) -> y``, so they apply equally to tree ensembles, linear models, and
+arbitrary black boxes.
 
 Shared Methods
 --------------
@@ -72,30 +73,6 @@ Base Explainer
 --------------
 
 .. autoclass:: fdfi.explainers.Explainer
-   :members:
-   :special-members: __init__, __call__
-   :show-inheritance:
-
-Tree-Based Models
------------------
-
-.. autoclass:: fdfi.explainers.TreeExplainer
-   :members:
-   :special-members: __init__, __call__
-   :show-inheritance:
-
-Linear Models
--------------
-
-.. autoclass:: fdfi.explainers.LinearExplainer
-   :members:
-   :special-members: __init__, __call__
-   :show-inheritance:
-
-Kernel Methods
---------------
-
-.. autoclass:: fdfi.explainers.KernelExplainer
    :members:
    :special-members: __init__, __call__
    :show-inheritance:
