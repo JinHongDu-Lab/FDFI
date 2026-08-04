@@ -10,7 +10,7 @@ A Python library for computing feature importance using disentangled methods, in
 
 📖 **[Read the documentation](https://fdfi.readthedocs.io/en/latest/)**
 
-Current release: `0.0.9`
+Current release: `0.0.10`
 
 ## Overview
 
@@ -212,7 +212,7 @@ FDFI/
 ├── tests/                 # Test suite
 ├── docs/                  # Documentation & tutorials
 │   ├── tutorials/        # Jupyter notebook tutorials
-│   └── case_studies/     # Applied analyses on HIV-1 VRC01 neutralization data
+│   └── case_studies/     # Applied analyses: HIV-1 VRC01 neutralization, UCI CTG
 ├── pyproject.toml        # Package configuration
 └── README.md            # This file
 ```

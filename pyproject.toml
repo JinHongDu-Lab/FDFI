@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fdfi"
-version = "0.0.9"
+version = "0.0.10"
 description = "Flow-Disentangled Feature Importance"
 readme = "README.md"
 authors = [
