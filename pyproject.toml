@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fdfi"
-version = "0.0.8"
+version = "0.0.10"
 description = "Flow-Disentangled Feature Importance"
 readme = "README.md"
 authors = [
@@ -53,18 +53,25 @@ flow = [
 docs = [
     "sphinx>=5.0.0",
     "sphinx-rtd-theme>=1.2.0",
+    "myst-parser>=1.0.0",
+    "nbsphinx>=0.9.0",
+    # Needed only to re-execute the documentation notebooks, not to build the
+    # HTML (nbsphinx_execute = "never"). xlrd reads the UCI CTG .xls used by
+    # the Cardiotocography case study.
+    "ipykernel>=6.0.0",
+    "xlrd>=2.0.1",
 ]
 all = [
-    "dev",
-    "flow",
-    "docs",
+    "fdfi[dev]",
+    "fdfi[flow]",
+    "fdfi[docs]",
 ]
 
 [project.urls]
-Homepage = "https://github.com/jaydu1/FDFI"
-Documentation = "https://github.com/jaydu1/FDFI"
-Repository = "https://github.com/jaydu1/FDFI"
-Issues = "https://github.com/jaydu1/FDFI/issues"
+Homepage = "https://github.com/jinhongdu-lab/FDFI"
+Documentation = "https://fdfi.readthedocs.io/en/latest/"
+Repository = "https://github.com/jinhongdu-lab/FDFI"
+Issues = "https://github.com/jinhongdu-lab/FDFI/issues"
 
 [tool.setuptools]
 packages = ["fdfi"]

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.0.10] - 2026-08-04
+### Removed
+- **`TreeExplainer`, `LinearExplainer`, and `KernelExplainer`**: these were placeholders whose `__call__` raised `NotImplementedError`, and they are gone from `fdfi.explainers` along with their API pages, user-guide sections, and tests. The three implemented variants (`OTExplainer`, `EOTExplainer`, `FlowExplainer`) are model-agnostic — they wrap any callable `f(X) -> y` — so tree ensembles, linear models, and arbitrary black boxes are already covered without a model-specific class. **Breaking:** code that imported these names now raises `ImportError` instead of failing later at call time.
+
+### Fixed
+- **Documentation that described parameters which do not exist**: `docs/user_guide/statistical_inference.rst` told users to call `OTExplainer(..., crossfit=True, n_folds=5)`. Neither parameter exists; both were absorbed by `**kwargs`, so users got no error and no cross-fitting. Rewritten to use the real `Crossfitting` wrapper. Three further examples constructed the unexported base `Explainer` with the internal `fit_flow` flag.
+- **Math rendering**: `concepts.rst` used doubled backslashes inside `:math:` roles, so MathJax read `\\` as a line break and rendered the UEIF equation as garbled multi-line text; `api/explainers.rst` used `$...$` math, which is a MyST extension and is inert in reStructuredText. `choosing_explainer.rst` had a section heading with no underline, which filed four hyperparameter subsections under the wrong parent.
+- **SCPI definition in the tutorials**: `flow_explainer.ipynb` defined SCPI as `Var_b[f(X̃)]`, contradicting `concepts.rst`, the 0.0.9 changelog, and the notebook's own output. Now stated in loss-general form with `phi_SCPI = phi_CPI + Var_b` as the Sobol connection.
+- **Broken packaging extras**: the `docs` extra could not build the documentation (missing `myst-parser`, `nbsphinx`, `ipykernel`), and `all = ["dev", "flow", "docs"]` resolved to three unrelated PyPI distributions rather than this project's own extras. `docs` now also carries `xlrd`, needed to re-execute the CTG case study.
+- UEIF is expanded consistently as "uncentered efficient influence function"; the FAQ no longer describes flow-based and entropic OT as the same method.
+
+### Changed
+- **Case Study 2 is now a Cardiotocography (CTG) analysis**, adapted from `examples/ctg_analysis_demo.ipynb` and restructured to parallel Case Study 1. It replaces the HIV Flow case study and demonstrates `FlowExplainer` on 21 collinear continuous features.
+- All tutorial notebooks re-executed against the current package.
+- `docs/conf.py` derives `release` from `fdfi.__version__` rather than a hardcoded literal, and sets `html_baseurl` for canonical links.
+- Read the Docs URL added to `README.md` and `pyproject.toml`; the previous `Documentation` URL pointed back at the GitHub repository.
+
+## [0.0.9] - 2026-07-13
+### Added
+- **Arbitrary loss functions**: importance can now be defined through any per-sample loss instead of only the squared-error (L2) residual difference. New `fdfi/losses.py` registry provides regression losses (`squared_error`/`l2`, `absolute_error`/`l1`, `huber`, `pinball`) and binary-classification losses (`log_loss`/`bce`, `brier`, `zero_one`), plus `resolve_loss()`/`available_losses()`. Custom callables `loss(y_true, y_pred)` are also accepted.
+- **`loss` argument** on `OTExplainer`, `EOTExplainer`, `FlowExplainer`, and `Crossfitting` (default squared error → unchanged behaviour). Passing true labels `y` at call time uses the loss-difference (DFI) form; when `y` is omitted a label-free form is used that references the model's own prediction — the prediction shift for regression losses and a Bregman divergence (e.g. KL for log-loss) for proper scoring rules.
+- **`method='cpi'|'scpi'`** now available on `OTExplainer` and `EOTExplainer` (previously only `FlowExplainer`), selecting the averaging order for the counterfactual prediction (CPI averages the prediction before the loss; SCPI averages the per-sample loss).
+- New tests: `tests/test_losses.py` (registry/built-ins) and loss-integration tests in `tests/test_explainers.py` (L2 parity, regression/classification losses, CPI/SCPI, guards, cross-fitting).
+
+### Changed
+- `FlowExplainer` SCPI now follows the documented definition `E_b[L(Y, f(X̃_b))]` (for squared error, equal to CPI plus the prediction variance) rather than the raw prediction variance, making SCPI consistent across all explainers.
+- Updated `docs/user_guide/concepts.rst`, `docs/user_guide/choosing_explainer.rst`, and `docs/api/explainers.rst` to document loss selection and the generalized CPI/SCPI formulas.
+
 ## [0.0.8] - 2026-06-30
 ### Added
 - **One-sided confidence interval plots**: `confidence_interval_plot()` now detects `alternative='greater'` or `alternative='less'` in the `conf_int()` result dict and renders the open bound as a short stub with a native matplotlib limit-indicator caret (►/◄ via `xuplims`/`xlolims`), following the forest-plot truncation convention. Axis limits exclude the infinite bound; a corner annotation and one-sided hint are added to the default xlabel and title.

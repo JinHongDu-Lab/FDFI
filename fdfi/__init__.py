@@ -45,23 +45,29 @@ def _resolve_version() -> str:
 __version__ = _resolve_version()
 __author__ = "FDFI Team"
 
-# Import main explainer and utility modules
-from . import explainers
-from . import plots
-from . import utils
-from . import models
-
-# Import key classes for convenience
-from .explainers import FlowExplainer
 from .explainers import Crossfitting
+from .losses import (
+    resolve_loss,
+    available_losses,
+    squared_error,
+    absolute_error,
+    huber,
+    pinball,
+    log_loss,
+    brier,
+    zero_one,
+)
 
 __all__ = [
     "__version__",
-    "__author__",
-    "explainers",
-    "plots",
-    "utils",
-    "models",
-    "FlowExplainer",
     "Crossfitting",
+    "resolve_loss",
+    "available_losses",
+    "squared_error",
+    "absolute_error",
+    "huber",
+    "pinball",
+    "log_loss",
+    "brier",
+    "zero_one",
 ]

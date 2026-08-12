@@ -7,9 +7,6 @@ import numpy as np
 import importlib.util
 from fdfi.explainers import (
     Explainer,
-    TreeExplainer,
-    LinearExplainer,
-    KernelExplainer,
     OTExplainer,
     EOTExplainer,
     FlowExplainer,
@@ -63,79 +60,6 @@ class TestExplainer:
         # Both should raise NotImplementedError
         with pytest.raises(NotImplementedError):
             explainer.shap_values(X)
-
-
-class TestTreeExplainer:
-    """Test the TreeExplainer class."""
-    
-    def test_init(self):
-        """Test TreeExplainer initialization."""
-        # Mock tree model
-        model = object()
-        explainer = TreeExplainer(model, fit_flow=False)
-        assert explainer.model == model
-    
-    def test_call_not_implemented(self):
-        """Test that TreeExplainer raises NotImplementedError."""
-        model = object()
-        explainer = TreeExplainer(model, fit_flow=False)
-        X = np.random.randn(10, 5)
-        
-        with pytest.raises(NotImplementedError):
-            explainer(X)
-
-
-class TestLinearExplainer:
-    """Test the LinearExplainer class."""
-    
-    def test_init(self):
-        """Test LinearExplainer initialization."""
-        model = object()
-        explainer = LinearExplainer(model, fit_flow=False)
-        assert explainer.model == model
-    
-    def test_call_not_implemented(self):
-        """Test that LinearExplainer raises NotImplementedError."""
-        model = object()
-        explainer = LinearExplainer(model, fit_flow=False)
-        X = np.random.randn(10, 5)
-        
-        with pytest.raises(NotImplementedError):
-            explainer(X)
-
-
-class TestKernelExplainer:
-    """Test the KernelExplainer class."""
-    
-    def test_init_requires_data(self):
-        """Test that KernelExplainer requires background data."""
-        def dummy_model(x):
-            return x.sum(axis=1)
-        
-        with pytest.raises(ValueError, match="requires background data"):
-            KernelExplainer(dummy_model, None)
-    
-    def test_init_with_data(self):
-        """Test KernelExplainer initialization with data."""
-        def dummy_model(x):
-            return x.sum(axis=1)
-        
-        data = np.random.randn(100, 10)
-        explainer = KernelExplainer(dummy_model, data, fit_flow=False)
-        assert explainer.model == dummy_model
-        assert np.array_equal(explainer.data, data)
-    
-    def test_call_not_implemented(self):
-        """Test that KernelExplainer raises NotImplementedError."""
-        def dummy_model(x):
-            return x.sum(axis=1)
-        
-        data = np.random.randn(100, 10)
-        explainer = KernelExplainer(dummy_model, data, fit_flow=False)
-        X = np.random.randn(10, 10)
-        
-        with pytest.raises(NotImplementedError):
-            explainer(X)
 
 
 def generate_exp3_data(n=500, rho=0.8, seed=42):
@@ -1122,4 +1046,197 @@ class TestMultipleTesting:
         explainer = _make_ot_explainer_with_results()
         with pytest.raises(ImportError, match="Multiple testing correction requires statsmodels"):
             explainer.conf_int(multitest_method="bonferroni")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Arbitrary-loss support (regression + classification, CPI/SCPI)
+# ──────────────────────────────────────────────────────────────────────────
+
+def _linear_regression_dgp(n=300, d=6, seed=0):
+    """Linear DGP: features 0, 1 active; 2..d-1 null."""
+    rng = np.random.default_rng(seed)
+    X = rng.standard_normal((n, d))
+    beta = np.zeros(d)
+    beta[0], beta[1] = 2.0, -1.5
+    y = X @ beta + 0.1 * rng.standard_normal(n)
+
+    def model(Xin):
+        return Xin @ beta
+
+    return X, y, model
+
+
+def _binary_classification_dgp(n=400, d=6, seed=0):
+    """Logistic DGP with a probability-output model; features 0, 1 active."""
+    rng = np.random.default_rng(seed)
+    X = rng.standard_normal((n, d))
+    w = np.zeros(d)
+    w[0], w[1] = 2.0, -1.5
+    logits = X @ w
+    p = 1.0 / (1.0 + np.exp(-logits))
+    y = rng.binomial(1, p).astype(float)
+
+    def model(Xin):  # returns P(y=1)
+        return 1.0 / (1.0 + np.exp(-(Xin @ w)))
+
+    return X, y, model
+
+
+class TestArbitraryLossOT:
+    """OTExplainer with non-L2 losses and CPI/SCPI averaging."""
+
+    def test_default_equals_squared_error(self):
+        X, y, model = _linear_regression_dgp()
+        e_default = OTExplainer(model, X, nsamples=15, random_state=0)
+        e_l2 = OTExplainer(model, X, nsamples=15, random_state=0, loss="squared_error")
+        r_default = e_default(X[:80])
+        r_l2 = e_l2(X[:80])
+        assert np.allclose(r_default["phi_Z"], r_l2["phi_Z"], atol=1e-12)
+        assert np.allclose(r_default["phi_X"], r_l2["phi_X"], atol=1e-12)
+
+    def test_scpi_ge_cpi_label_free_l2(self):
+        # Label-free L2: SCPI = CPI + Var_b >= CPI per sample.
+        X, y, model = _linear_regression_dgp()
+        Xt = X[:60]
+        e_cpi = OTExplainer(model, X, nsamples=20, random_state=0, method="cpi")
+        e_scpi = OTExplainer(model, X, nsamples=20, random_state=0, method="scpi")
+        e_cpi(Xt)
+        e_scpi(Xt)
+        assert np.all(e_scpi.ueifs_Z >= e_cpi.ueifs_Z - 1e-9)
+
+    @pytest.mark.parametrize("loss", ["l1", "huber", "pinball"])
+    def test_regression_losses_rank_active(self, loss):
+        X, y, model = _linear_regression_dgp(seed=1)
+        Xt, yt = X[:120], y[:120]
+        e = OTExplainer(model, X, nsamples=25, random_state=0, loss=loss)
+        res = e(Xt, y=yt)
+        active = res["phi_X"][:2].mean()
+        null = res["phi_X"][2:].mean()
+        assert active > null
+
+    @pytest.mark.parametrize("loss", ["log_loss", "brier"])
+    def test_classification_losses_rank_active(self, loss):
+        X, y, model = _binary_classification_dgp(seed=2)
+        Xt, yt = X[:150], y[:150]
+        e = OTExplainer(model, X, nsamples=25, random_state=0, loss=loss)
+        res = e(Xt, y=yt)
+        active = res["phi_X"][:2].mean()
+        null = np.abs(res["phi_X"][2:]).mean()
+        assert active > null
+
+    def test_non_l2_without_y_divergence(self):
+        # Label-free non-L2 is allowed: it computes a divergence from the model's
+        # own prediction (KL for log-loss), non-negative and active > null.
+        X, y, model = _binary_classification_dgp(seed=7)
+        e = OTExplainer(model, X, nsamples=25, random_state=0, loss="log_loss")
+        res = e(X[:150])   # no y
+        assert np.all(np.isfinite(res["phi_X"]))
+        assert res["phi_Z"].min() >= -1e-8   # KL divergence is non-negative
+        assert res["phi_X"][:2].mean() > np.abs(res["phi_X"][2:]).mean()
+
+    def test_l1_without_y_equals_prediction_shift(self):
+        # For losses with L(a, a) = 0 the label-free base vanishes.
+        X, y, model = _linear_regression_dgp(seed=8)
+        e = OTExplainer(model, X, nsamples=20, random_state=0, loss="l1")
+        res = e(X[:100])   # no y
+        assert np.all(np.isfinite(res["phi_X"]))
+        assert res["phi_X"][:2].mean() > res["phi_X"][2:].mean()
+
+    def test_invalid_method_raises(self):
+        X, y, model = _linear_regression_dgp()
+        e = OTExplainer(model, X, nsamples=10, random_state=0, method="bogus")
+        with pytest.raises(ValueError, match="method must be"):
+            e(X[:20], y=y[:20])
+
+    def test_custom_callable_loss(self):
+        X, y, model = _linear_regression_dgp(seed=3)
+        Xt, yt = X[:100], y[:100]
+
+        def cubic(y_true, y_pred):
+            return np.abs(y_true - y_pred) ** 3
+
+        e = OTExplainer(model, X, nsamples=20, random_state=0, loss=cubic)
+        res = e(Xt, y=yt)
+        assert np.all(np.isfinite(res["phi_X"]))
+        assert res["phi_X"][:2].mean() > res["phi_X"][2:].mean()
+
+
+class TestArbitraryLossEOT:
+    """EOTExplainer with non-L2 losses."""
+
+    def test_default_equals_squared_error(self):
+        X, y, model = _linear_regression_dgp()
+        e_default = EOTExplainer(model, X, nsamples=15, random_state=0)
+        e_l2 = EOTExplainer(model, X, nsamples=15, random_state=0, loss="squared_error")
+        r_default = e_default(X[:80])
+        r_l2 = e_l2(X[:80])
+        assert np.allclose(r_default["phi_Z"], r_l2["phi_Z"], atol=1e-12)
+
+    def test_log_loss_ranks_active(self):
+        X, y, model = _binary_classification_dgp(seed=4)
+        Xt, yt = X[:150], y[:150]
+        e = EOTExplainer(model, X, nsamples=25, random_state=0, loss="log_loss")
+        res = e(Xt, y=yt)
+        assert res["phi_X"][:2].mean() > np.abs(res["phi_X"][2:]).mean()
+
+
+class TestArbitraryLossCrossfitting:
+    """Crossfitting forwards loss to fold explainers end-to-end."""
+
+    def test_log_loss_with_sklearn_classifier(self):
+        pytest.importorskip("sklearn")
+        from sklearn.linear_model import LogisticRegression
+
+        X, y, _ = _binary_classification_dgp(n=200, seed=5)
+        cf = Crossfitting(
+            LogisticRegression(max_iter=500),
+            X,
+            explainer_class=OTExplainer,
+            cv=3,
+            y=y,
+            loss="log_loss",
+            nsamples=15,
+            random_state=0,
+        )
+        results = cf()
+        assert np.all(np.isfinite(results["phi_X"]))
+        ci = cf.conf_int(alpha=0.05, target="X")
+        assert np.all(np.isfinite(ci["score"]))
+        assert np.all(ci["pvalue"] >= 0) and np.all(ci["pvalue"] <= 1)
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="FlowExplainer tests require torch")
+class TestArbitraryLossFlow:
+    """FlowExplainer with non-L2 losses and CPI/SCPI."""
+
+    def test_default_cpi_unchanged_for_l2(self):
+        rng = np.random.default_rng(0)
+        X_train = rng.standard_normal((60, 5))
+        X_test = rng.standard_normal((15, 5))
+        e_default = FlowExplainer(
+            simple_linear_model, X_train, fit_flow=True,
+            num_steps=50, nsamples=5, method="cpi", random_state=0, verbose=False,
+        )
+        e_l2 = FlowExplainer(
+            simple_linear_model, X_train, fit_flow=True,
+            num_steps=50, nsamples=5, method="cpi", random_state=0, verbose=False,
+            loss="squared_error",
+        )
+        r_default = e_default(X_test)
+        r_l2 = e_l2(X_test)
+        assert np.allclose(r_default["phi_Z"], r_l2["phi_Z"], atol=1e-10)
+
+    def test_log_loss_with_and_without_y(self):
+        X, y, model = _binary_classification_dgp(n=120, d=5, seed=6)
+        e = FlowExplainer(
+            model, X, fit_flow=True, num_steps=80, nsamples=8,
+            random_state=0, verbose=False, loss="log_loss",
+        )
+        # Without y -> label-free divergence (finite, non-negative in Z-space)
+        res_free = e(X[:40])
+        assert np.all(np.isfinite(res_free["phi_X"]))
+        assert res_free["phi_Z"].min() >= -1e-6
+        # With y -> DFI loss-difference form (finite)
+        res = e(X[:40], y=y[:40])
+        assert np.all(np.isfinite(res["phi_X"]))
 
