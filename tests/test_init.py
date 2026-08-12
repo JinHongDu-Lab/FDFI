@@ -29,3 +29,12 @@ def test_package_imports():
     """Test that package can be imported."""
     # Just check that the package imports without errors
     assert fdfi is not None
+
+
+def test_yifan_convenience_exports_are_preserved():
+    """The 0.0.10 integration keeps the public yifan-dev import surface."""
+    assert fdfi.FlowExplainer is fdfi.explainers.FlowExplainer
+    assert fdfi.plots is not None
+    assert fdfi.utils is not None
+    assert fdfi.models is not None
+    assert fdfi.resolve_loss("squared_error") is not None
