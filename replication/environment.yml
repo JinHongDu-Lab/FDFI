@@ -1,0 +1,25 @@
+name: fdfi-replication
+channels:
+  - conda-forge
+dependencies:
+  # Exact versions from the verified main@f86d696 Python 3.10 baseline.
+  - python=3.10.19
+  - numpy=2.2.6
+  - scipy=1.15.3
+  - pandas=2.3.3
+  - scikit-learn=1.7.2
+  - matplotlib=3.10.9
+  - seaborn=0.13.2
+  - statsmodels=0.14.6
+  - xlrd=2.0.2
+  - psutil=7.2.2
+  - tqdm=4.70.0
+  - ipykernel=7.3.0
+  - nbformat=5.11.0
+  - nbclient=0.11.0
+  - nbconvert=7.17.1
+  - pytest=9.1.1
+  - pip=26.1.2
+  - pip:
+      - torch==2.13.0
+      - torchdiffeq==0.2.5

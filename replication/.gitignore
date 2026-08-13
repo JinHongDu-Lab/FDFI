@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+quick_outputs/
+runs/
+metadata/matplotlib/
+# Local fixed CTG input; redistribution permission is unresolved.
+data/CTG.xls
