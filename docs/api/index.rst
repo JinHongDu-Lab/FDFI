@@ -17,11 +17,10 @@ Overview
 FDFI provides the following main modules:
 
 **Explainers** (:mod:`fdfi.explainers`)
-   Core explainer classes for computing feature importance. Includes base
-   ``Explainer`` class, specialized explainers (``TreeExplainer``,
-   ``LinearExplainer``, ``KernelExplainer``), optimal transport-based
-   explainers (``OTExplainer``, ``EOTExplainer``), flow-based DFI
-   (``FlowExplainer``), and cross-fitted inference (``Crossfitting``).
+   Core explainer classes for computing feature importance. Includes the base
+   ``Explainer`` class, optimal transport-based explainers (``OTExplainer``,
+   ``EOTExplainer``), flow-based DFI (``FlowExplainer``), and cross-fitted
+   inference (``Crossfitting``).
 
 **Plotting** (:mod:`fdfi.plots`)
    Visualization functions for feature importance including summary plots, 

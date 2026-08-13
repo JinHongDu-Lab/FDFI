@@ -10,7 +10,7 @@ What is Feature Importance?
 Feature importance quantifies **how much each input feature contributes** to a 
 model's predictions. Given a model :math:`f(x)` and an input 
 :math:`x = (x_1, ..., x_d)`, we want to compute attributions 
-:math:`\\phi = (\\phi_1, ..., \\phi_d)` where :math:`\\phi_j` represents the 
+:math:`\phi = (\phi_1, ..., \phi_d)` where :math:`\phi_j` represents the 
 importance of feature :math:`j`.
 
 SHAP and Shapley Values
@@ -20,7 +20,7 @@ SHAP (SHapley Additive exPlanations) computes feature importance using
 **Shapley values** from cooperative game theory. For a prediction :math:`f(x)`, 
 SHAP values satisfy:
 
-1. **Efficiency**: :math:`\\sum_j \\phi_j = f(x) - E[f(X)]`
+1. **Efficiency**: :math:`\sum_j \phi_j = f(x) - E[f(X)]`
 2. **Symmetry**: Features with equal contributions get equal attributions
 3. **Null**: Features that don't affect the output get zero attribution
 4. **Linearity**: Attributions combine linearly for ensemble models
@@ -38,15 +38,16 @@ to create counterfactual distributions. The key insight is:
    feature j comes from the data distribution vs. when it's replaced by 
    an independent sample.*
 
-Mathematically, let :math:`Z = L^{-1}(X - \\mu)` be the whitened 
-(disentangled) representation where features are uncorrelated. The 
-**Unit Effect Independent Feature** (UEIF) for feature :math:`j` is:
+Mathematically, let :math:`Z = L^{-1}(X - \mu)` be the whitened
+(disentangled) representation where features are uncorrelated. Importance is
+measured by the **uncentered efficient influence function** (UEIF), which for
+feature :math:`j` is:
 
 .. math::
 
-   \\text{UEIF}_j(x) = \\left( f(x) - E[f(\\tilde{X}^{(j)})] \\right)^2
+   \text{UEIF}_j(x) = \left( f(x) - E[f(\tilde{X}^{(j)})] \right)^2
 
-where :math:`\\tilde{X}^{(j)}` has feature :math:`j` replaced with an 
+where :math:`\tilde{X}^{(j)}` has feature :math:`j` replaced with an 
 independent sample from the marginal distribution.
 
 Gaussian vs Entropic OT
@@ -57,7 +58,7 @@ DFI provides two main approaches:
 **Gaussian OT (OTExplainer)**
 
 - Assumes data is approximately Gaussian
-- Uses closed-form Gaussian optimal transport: :math:`Z = L^{-1}(X - \\mu)`
+- Uses closed-form Gaussian optimal transport: :math:`Z = L^{-1}(X - \mu)`
 - Fast and stable
 - Best for continuous, roughly normal data
 
@@ -77,25 +78,56 @@ space Z where features are approximately independent.
 
 **CPI (Conditional Permutation Importance)**
 
-Averages predictions first, then computes squared difference:
+Averages the counterfactual prediction first, then applies the loss:
 
 .. math::
 
-   \phi_{Z,j}^{CPI} = (Y - \mathbb{E}_b[f(\tilde{X}_b^{(j)})])^2
+   \phi_{Z,j}^{CPI} = L\!\big(Y,\; \mathbb{E}_b[f(\tilde{X}_b^{(j)})]\big)
+   \; - \; L\!\big(Y, f(X)\big)
 
 where :math:`\tilde{X}_b^{(j)} = T^{-1}(\tilde{Z}_b^{(j)})` and 
-:math:`\tilde{Z}_b^{(j)}` has the j-th component replaced with sample b.
+:math:`\tilde{Z}_b^{(j)}` has the j-th component replaced with sample b, and
+:math:`L` is a per-sample loss.
 
 **SCPI (Sobol-CPI)**
 
-Computes squared differences first for each Monte Carlo sample, then averages:
+Applies the loss to each Monte Carlo sample first, then averages:
 
 .. math::
 
-   \phi_{Z,j}^{SCPI} = \mathbb{E}_b[(Y - f(\tilde{X}_b^{(j)}))^2]
+   \phi_{Z,j}^{SCPI} = \mathbb{E}_b\!\big[L\!\big(Y, f(\tilde{X}_b^{(j)})\big)\big]
+   \; - \; L\!\big(Y, f(X)\big)
 
-This is equivalent to the Sobol sensitivity index formulation. The key 
-difference from CPI is the **order of averaging**.
+The key difference from CPI is the **order of averaging**; the two coincide for
+a linear loss and differ by a Jensen gap otherwise. For the squared-error loss,
+:math:`\phi^{SCPI} = \phi^{CPI} + \mathrm{Var}_b[f(\tilde{X}_b)]`, recovering the
+Sobol total-order sensitivity index.
+
+**Choosing a loss**
+
+By default :math:`L` is the squared error, so the score reduces to the classic
+difference of L2 residuals. Any regression loss (``'l1'``, ``'huber'``,
+``'pinball'``) or binary-classification loss (``'log_loss'``, ``'brier'``,
+``'zero_one'``) can be selected via the ``loss`` argument, or a custom callable
+``loss(y_true, y_pred)`` supplied directly.
+
+If the true labels ``y`` are passed at call time
+(``explainer(X_test, y=y_test)``), the score is the loss-difference (DFI / LOCO)
+form, which is centred near zero for null features. If ``y`` is omitted, a
+label-free form is used that references the model's own prediction and subtracts
+the self-loss floor:
+
+.. math::
+
+   \phi_{Z,j} = \operatorname*{agg}_b L(\hat{Y}, f(\tilde{X}_b^{(j)}))
+   \; - \; L(\hat{Y}, \hat{Y}), \qquad \hat{Y} = f(X).
+
+For losses with :math:`L(a, a) = 0` (squared error, L1, Huber, pinball) this is
+the prediction shift under that loss. For a proper scoring rule (log-loss,
+Brier) it is the associated Bregman divergence between the baseline and
+counterfactual predictions (e.g. :math:`\mathrm{KL}(\hat{Y}\,\|\,f(\tilde{X}_b))`
+for log-loss), which is non-negative and ~0 for null features. Non-proper or
+discontinuous losses (e.g. ``'zero_one'``) are only meaningful with ``y``.
 
 **Jacobian Transformation to X-space**
 

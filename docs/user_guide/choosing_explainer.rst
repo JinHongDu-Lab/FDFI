@@ -29,15 +29,16 @@ Quick Decision Guide
    * - Mixed data types
      - ``EOTExplainer`` with Gower
      - Use ``cost_metric="gower"``
-   * - Tree-based models
-     - ``TreeExplainer``
-     - Optimized for RF, XGBoost, etc.
-   * - Linear models
-     - ``LinearExplainer``
-     - Exact for linear models
    * - Any black-box model
-     - ``OTExplainer`` or ``KernelExplainer``
-     - Model-agnostic
+     - ``OTExplainer``
+     - Model-agnostic; needs only a ``f(X) -> y`` callable
+
+.. note::
+
+   All three variants are model-agnostic — they wrap any callable
+   ``f(X) -> y`` — so there is no separate explainer to pick for tree
+   ensembles, linear models, or arbitrary black boxes. Choose based on the
+   *data* distribution, not the model type.
 
 OTExplainer (Gaussian OT)
 -------------------------
@@ -157,19 +158,49 @@ underlying distribution structure
 
 **Understanding CPI vs SCPI:**
 
-- **CPI (Conditional Permutation Importance)**: Average predictions first, then 
-  compute squared difference:
+- **CPI (Conditional Permutation Importance)**: Average the counterfactual
+  prediction first, then apply the loss:
   
   .. math::
   
-     \phi_j^{CPI} = (Y - E_b[f(\tilde{X}_b^{(j)})])^2
+     \phi_j^{CPI} = L\big(Y, E_b[f(\tilde{X}_b^{(j)})]\big) - L\big(Y, f(X)\big)
   
-- **SCPI (Sobol-CPI)**: Compute squared differences first, then average (Sobol
-  sensitivity index formulation):
+- **SCPI (Sobol-CPI)**: Apply the loss per Monte Carlo sample first, then
+  average:
   
   .. math::
   
-     \phi_j^{SCPI} = E_b[(Y - f(\tilde{X}_b^{(j)}))^2]
+     \phi_j^{SCPI} = E_b\big[L\big(Y, f(\tilde{X}_b^{(j)})\big)\big] - L\big(Y, f(X)\big)
+
+The ``method`` argument (``'cpi'`` or ``'scpi'``) is available on ``OTExplainer``,
+``EOTExplainer``, and ``FlowExplainer``.
+
+**Choosing a loss:**
+
+The importance score is defined through a loss ``L(y_true, y_pred)``. By default
+this is the squared error, so the score is the classic difference of L2
+residuals. The ``loss`` argument (orthogonal to ``method``) selects another
+loss:
+
+- **Regression:** ``'squared_error'`` (``'l2'``/``'mse'``), ``'absolute_error'``
+  (``'l1'``/``'mae'``), ``'huber'``, ``'pinball'`` (``'quantile'``).
+- **Binary classification:** ``'log_loss'`` (``'bce'``/``'cross_entropy'``),
+  ``'brier'``, ``'zero_one'`` — the model must output a probability ``P(y=1)``.
+- **Custom:** any callable ``loss(y_true, y_pred)`` returning the per-sample loss.
+
+Passing the true labels ``y`` at call time uses the loss-difference (DFI) form,
+which is preferred for interpretability (null features ~0):
+
+.. code-block:: python
+
+   explainer = OTExplainer(model, X_background, loss="log_loss")
+   results = explainer(X_test, y=y_test)   # DFI loss-difference form
+
+If ``y`` is omitted, a label-free form referencing the model's own prediction is
+used instead: :math:`\operatorname{agg}_b L(\hat{Y}, f(\tilde{X}_b)) - L(\hat{Y}, \hat{Y})`.
+This is the prediction shift for regression losses and a Bregman divergence
+(e.g. KL for log-loss) for proper scoring rules. Non-proper losses such as
+``'zero_one'`` should always be used with ``y``.
 
 **External flow models:**
 
@@ -206,70 +237,6 @@ explainers:
    diag = explainer.diagnostics
    print(diag["latent_independence_median"], diag["latent_independence_label"])
    print(diag["distribution_fidelity_mmd"], diag["distribution_fidelity_label"])
-
-TreeExplainer
--------------
-
-**Best for:** Tree ensemble models (Random Forest, Gradient Boosting, XGBoost, 
-LightGBM)
-
-**Pros:**
-
-- Optimized tree traversal algorithms
-- Exact or approximate Shapley computation
-
-**Note:** Currently a placeholder—full implementation coming soon.
-
-.. code-block:: python
-
-   from fdfi.explainers import TreeExplainer
-   from sklearn.ensemble import RandomForestRegressor
-
-   model = RandomForestRegressor().fit(X_train, y_train)
-   explainer = TreeExplainer(model, data=X_background)
-
-LinearExplainer
----------------
-
-**Best for:** Linear models (Linear/Logistic Regression, Ridge, Lasso)
-
-**Pros:**
-
-- Exact Shapley values for linear models
-- Very fast computation
-
-**Note:** Currently a placeholder—full implementation coming soon.
-
-.. code-block:: python
-
-   from fdfi.explainers import LinearExplainer
-   from sklearn.linear_model import LinearRegression
-
-   model = LinearRegression().fit(X_train, y_train)
-   explainer = LinearExplainer(model, data=X_background)
-
-KernelExplainer
----------------
-
-**Best for:** Any model where you have no prior knowledge of structure
-
-**Pros:**
-
-- Works with any callable model
-- Fully model-agnostic
-
-**Cons:**
-
-- Slowest method
-- Can have high variance
-
-**Note:** Currently a placeholder—full implementation coming soon.
-
-.. code-block:: python
-
-   from fdfi.explainers import KernelExplainer
-
-   explainer = KernelExplainer(model.predict, data=X_background)
 
 Crossfitting (Cross-Fitted Inference)
 -------------------------------------
@@ -322,6 +289,7 @@ are critical
    results = cf()
 
 Hyperparameter Guidelines
+-------------------------
 
 nsamples
 ~~~~~~~~

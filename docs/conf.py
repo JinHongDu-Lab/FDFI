@@ -13,7 +13,10 @@ sys.path.insert(0, os.path.abspath(".."))
 project = "FDFI"
 copyright = "2025, FDFI Team"
 author = "FDFI Team"
-release = "0.0.8"
+try:
+    from fdfi import __version__ as release
+except ImportError:  # pragma: no cover - fallback when fdfi is not importable
+    release = "0.0.0"
 
 # -- General configuration ---------------------------------------------------
 extensions = [
@@ -92,6 +95,7 @@ source_suffix = {
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
 html_title = "FDFI Documentation"
+html_baseurl = "https://fdfi.readthedocs.io/en/latest/"
 
 html_theme_options = {
     "logo_only": False,

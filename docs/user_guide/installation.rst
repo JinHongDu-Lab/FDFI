@@ -18,7 +18,7 @@ Then install FDFI:
 
 .. code-block:: bash
 
-   git clone https://github.com/jaydu1/FDFI.git
+   git clone https://github.com/jinhongdu-lab/FDFI.git
    cd FDFI
    pip install -e .
 
@@ -27,7 +27,7 @@ From Source with pip
 
 .. code-block:: bash
 
-   git clone https://github.com/jaydu1/FDFI.git
+   git clone https://github.com/jinhongdu-lab/FDFI.git
    cd FDFI
    pip install -e .
 
@@ -49,11 +49,16 @@ groups are available for heavier workflows:
 
    pip install -e ".[dev]"
 
-**Documentation building** (Sphinx, RTD theme):
+**Documentation** (Sphinx, RTD theme, MyST, nbsphinx):
 
 .. code-block:: bash
 
    pip install -e ".[docs]"
+
+This extra also installs what is needed to *re-execute* the documentation
+notebooks (``ipykernel``, and ``xlrd`` for the CTG case study's spreadsheet).
+Building the HTML does not run them — ``conf.py`` sets
+``nbsphinx_execute = "never"`` and the stored outputs are rendered as-is.
 
 **All optional dependencies**:
 
@@ -80,13 +85,16 @@ Requirements
 - NumPy >= 1.20.0
 - SciPy >= 1.7.0
 
-**Optional requirements:**
+- scikit-learn >= 1.0.0
+- matplotlib >= 3.5.0
+- seaborn >= 0.12.0
+- statsmodels >= 0.13.0
 
-- matplotlib >= 3.5.0 (for plotting)
-- seaborn >= 0.12.0 (for plotting)
-- torch >= 2.0.0 (for flow matching)
-- torchdiffeq >= 0.2.3 (for flow matching)
-- scikit-learn (for mixture models in utilities)
+**Optional requirements** (``pip install "fdfi[flow]"``, needed only by
+``FlowExplainer``):
+
+- torch >= 2.0.0
+- torchdiffeq >= 0.2.3
 
 Verifying Installation
 ----------------------
@@ -115,18 +123,15 @@ Troubleshooting
 
 **ImportError for torch or torchdiffeq**
 
-If you see import errors related to PyTorch, you need to install the flow 
-dependencies:
+Only :class:`~fdfi.explainers.FlowExplainer` requires PyTorch.  If you need it,
+install the flow dependencies:
 
 .. code-block:: bash
 
    pip install -e ".[flow]"
 
-Or pass ``fit_flow=False`` when creating explainers to disable flow matching:
-
-.. code-block:: python
-
-   explainer = Explainer(model, data=X, fit_flow=False)
+Otherwise use :class:`~fdfi.explainers.OTExplainer` or
+:class:`~fdfi.explainers.EOTExplainer`, which never import torch.
 
 **Matplotlib backend issues**
 
