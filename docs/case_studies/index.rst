@@ -47,3 +47,4 @@ place.
 
    eot_case_study_sens50
    flow_case_study_ctg
+   NOTEBOOK_BASELINE
