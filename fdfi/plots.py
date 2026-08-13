@@ -28,6 +28,7 @@ __all__ = [
     "dependence_plot",
     "correlation_heatmap",
     "summary_bar",
+    "cv_scatter",
     "confidence_interval_plot",
     "diagnostics_plot",
 ]
@@ -166,6 +167,176 @@ def _summary_dataframe(
         .sort_values("phi", ascending=False, kind="mergesort")
         .reset_index(drop=True)
     )
+
+
+def cv_scatter(
+    phi_X: ArrayLike,
+    se_X: ArrayLike,
+    feature_names: Sequence[Any],
+    y_cutoff: float = 3.0,
+    group_colors: Optional[Mapping[str, Any]] = None,
+    savepath: Optional[str] = None,
+    **kwargs: Any,
+):
+    """Plot coefficient of variation against global feature importance.
+
+    This restores the public plotting helper previously published on
+    ``yifan-dev``. High-CV features remain visible as capped hollow triangles
+    rather than being silently dropped.
+
+    Parameters
+    ----------
+    phi_X : array-like of shape (n_features,)
+        Global feature-importance scores. Absolute values are plotted.
+    se_X : array-like of shape (n_features,)
+        Standard errors corresponding to ``phi_X``.
+    feature_names : sequence of str
+        Human-readable feature names.
+    y_cutoff : float, default=3.0
+        CV threshold above which markers are capped at the top of the plot.
+    group_colors : mapping, optional
+        Mapping from feature name to Matplotlib color.
+    savepath : str, optional
+        Path where the figure should be saved.
+    **kwargs
+        Styling options including ``figsize``, ``title_fontsize``,
+        ``label_fontsize``, ``tick_fontsize``, ``dpi``, ``bbox_inches``,
+        ``outlier_cap``, and ``show``.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object.
+    ax : matplotlib.axes.Axes
+        The axes object.
+    cv_df_filtered : pandas.DataFrame
+        Features whose CV is at most ``y_cutoff``.
+    cv_df_outliers : pandas.DataFrame
+        Features whose CV exceeds ``y_cutoff``.
+
+    Notes
+    -----
+    CV is computed as ``se / (abs(phi) + 1e-8)``. The epsilon preserves
+    zero-importance features with non-zero uncertainty as high-CV observations.
+
+    Examples
+    --------
+    >>> phi = np.array([0.05, 0.0, 0.02])
+    >>> se = np.array([0.005, 0.003, 0.002])
+    >>> fig, ax, stable, noisy = cv_scatter(
+    ...     phi, se, ["A", "B", "C"], show=False
+    ... )
+    """
+    if y_cutoff <= 0:
+        raise ValueError("y_cutoff must be positive")
+
+    phi = _as_1d(phi_X, "phi_X")
+    se = _sanitize_se(se_X, phi.shape[0])
+    names = _feature_names(feature_names, phi.shape[0])
+
+    try:
+        import pandas as pd
+    except ImportError as exc:  # pragma: no cover - pandas installed via seaborn
+        raise ImportError(
+            "cv_scatter returns pandas DataFrames. Install pandas to use it."
+        ) from exc
+
+    cv_df = pd.DataFrame(
+        {
+            "feature": names,
+            "phi": np.abs(phi),
+            "se": se,
+        }
+    )
+    cv_df["cv"] = cv_df["se"] / (cv_df["phi"] + 1e-8)
+    cv_df_filtered = (
+        cv_df[cv_df["cv"] <= y_cutoff]
+        .copy()
+        .sort_values("phi", ascending=False, kind="mergesort")
+    )
+    cv_df_outliers = (
+        cv_df[cv_df["cv"] > y_cutoff]
+        .copy()
+        .sort_values("phi", ascending=False, kind="mergesort")
+    )
+
+    fig, ax = _fig_ax(None, kwargs.get("figsize", (10.0, 4.0)))
+    y_top = y_cutoff + 0.5
+    outlier_cap = min(
+        float(kwargs.get("outlier_cap", y_cutoff + 0.4)), y_top - 0.05
+    )
+
+    def colors(frame):
+        if group_colors is None:
+            return ["#4878a8"] * len(frame)
+        return [group_colors.get(name, "#888888") for name in frame["feature"]]
+
+    if not cv_df_filtered.empty:
+        ax.scatter(
+            cv_df_filtered["phi"],
+            cv_df_filtered["cv"],
+            c=colors(cv_df_filtered),
+            s=85,
+            marker="o",
+            edgecolors="white",
+            linewidths=0.7,
+            zorder=3,
+        )
+    if not cv_df_outliers.empty:
+        ax.scatter(
+            cv_df_outliers["phi"],
+            np.full(len(cv_df_outliers), outlier_cap),
+            s=100,
+            marker="v",
+            facecolors="none",
+            edgecolors=colors(cv_df_outliers),
+            linewidths=1.2,
+            zorder=4,
+        )
+
+    tick_fontsize = kwargs.get("tick_fontsize", 7.5)
+    for _, row in cv_df_filtered.iterrows():
+        ax.annotate(
+            row["feature"],
+            xy=(row["phi"], row["cv"]),
+            xytext=(3, 3),
+            textcoords="offset points",
+            fontsize=tick_fontsize,
+        )
+    for _, row in cv_df_outliers.iterrows():
+        ax.annotate(
+            row["feature"],
+            xy=(row["phi"], outlier_cap),
+            xytext=(3, 3),
+            textcoords="offset points",
+            fontsize=tick_fontsize,
+        )
+
+    ax.axhline(1.0, color="crimson", linestyle="--", linewidth=1.1, label="CV = 1")
+    ax.set_xlabel(
+        r"Mean $|\phi_X|$ (importance)", fontsize=kwargs.get("label_fontsize", 10)
+    )
+    ax.set_ylabel(
+        "Coefficient of Variation (se / phi)",
+        fontsize=kwargs.get("label_fontsize", 10),
+    )
+    ax.set_ylim(-0.05, y_top)
+    ax.set_title(
+        "Attribution Reliability: Importance vs. Coefficient of Variation\n"
+        f"(Features with CV > {y_cutoff:g} are capped at the top edge)",
+        fontsize=kwargs.get("title_fontsize", 11),
+    )
+    ax.grid(linestyle="--", alpha=0.35, zorder=0)
+    ax.set_axisbelow(True)
+    ax.legend(fontsize=9, loc="upper right")
+    _finish_figure(
+        fig,
+        savepath,
+        kwargs.get("show", True),
+        dpi=kwargs.get("dpi", 150),
+        bbox_inches=kwargs.get("bbox_inches", "tight"),
+    )
+    return fig, ax, cv_df_filtered, cv_df_outliers
 
 
 def _group_remaining(
