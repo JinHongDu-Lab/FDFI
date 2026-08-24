@@ -33,9 +33,28 @@ def parse_args() -> argparse.Namespace:
         "--workflow", choices=("all", "sens50", "ctg", "simulation"), default="all",
         help="run/check one isolated smoke-test workflow",
     )
+    parser.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=None,
+        help=(
+            "directory that receives timestamped run folders; defaults to "
+            "this checkout's replication/runs"
+        ),
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    raise SystemExit(run_replication(mode="quick", check_only=args.check, workflow=args.workflow))
+    options = {}
+    if args.runs_dir is not None:
+        options["runs_dir"] = args.runs_dir.expanduser().resolve()
+    raise SystemExit(
+        run_replication(
+            mode="quick",
+            check_only=args.check,
+            workflow=args.workflow,
+            **options,
+        )
+    )

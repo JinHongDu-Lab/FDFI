@@ -64,7 +64,12 @@ class FlowMatchingModel:
 
     def __init__(self, X, dim=10, sigma_min=0.01, device=None,
                  hidden_dim=64, time_embed_dim=32, num_blocks=1, use_bn=False):
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if device is not None:
+            self.device = torch.device(device)
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
         self.dim = dim
         self.sigma_min = sigma_min
         self.hidden_dim = hidden_dim
@@ -213,7 +218,13 @@ class FlowMatchingModel:
             t_expand = torch.ones(x.size(0), 1, device=self.device) * t
             return self.model(x, t_expand)
 
-        out = odeint(odefunc, x0, t, rtol=rtol, atol=atol, method=method)
+        # torchdiffeq uses float64 for adaptive-solver time values by default,
+        # while Apple's MPS backend supports only float32 tensors here.
+        solver_options = {"dtype": torch.float32} if self.device.type == "mps" else None
+        out = odeint(
+            odefunc, x0, t, rtol=rtol, atol=atol, method=method,
+            options=solver_options,
+        )
         return out[-1]  
     
     def Jacobi_Batch(self, x_batch, t_span=(0, 1)):
@@ -273,9 +284,11 @@ class FlowMatchingModel:
             return torch.cat([dxdt, dJdt.reshape(-1)])
 
         t = torch.tensor(t_span, dtype=torch.float32, device=self.device)
-        y_aug_out = odeint(odefunc_aug, y0_torch, t, rtol=1e-3, atol=1e-5, method='dopri5')
+        solver_options = {"dtype": torch.float32} if self.device.type == "mps" else None
+        y_aug_out = odeint(
+            odefunc_aug, y0_torch, t, rtol=1e-3, atol=1e-5,
+            method='dopri5', options=solver_options,
+        )
         y1 = y_aug_out[-1]
         J1 = y1[self.dim:].reshape(self.dim, self.dim).detach().cpu().numpy()
         return J1
-
-

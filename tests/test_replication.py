@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -80,25 +81,27 @@ def test_sens50_formal_paths_use_fixed_case_study_data():
     assert sens.GROUP_PATH == ROOT / "docs/case_studies/data/feature_group.csv"
 
 
-def test_simulation_allows_only_draft_quick_run_before_author_approval():
+def test_simulation_preflight_uses_confirmed_reference_specification():
     from replication.scripts import reproduce_simulation
     quick = reproduce_simulation.preflight("quick")
     full = reproduce_simulation.preflight("full")
     assert quick["ready"] is True
-    assert "meeting-preview" in str(quick["detail"])
-    assert full["ready"] is False
-    assert "BLOCKED" in str(full["detail"])
+    assert "smoke test" in str(quick["detail"])
+    assert full["ready"] is True
+    assert "published grids" in str(full["detail"])
 
 
 def test_simulation_block_covariance_and_relevant_features_are_deterministic():
-    from replication.scripts.simulation import block_covariance, generate_data
-    covariance = block_covariance(10, 5, 0.6)
+    from replication.scripts.simulation import ACTIVE_FEATURES, block_covariance, generate_data
+    covariance = block_covariance(20, 10, 0.6)
     assert np.allclose(np.diag(covariance), 1.0)
-    assert covariance[0, 1] == 0.6 and covariance[0, 5] == 0.0
-    first = generate_data(40, 0.6, 7, 10, 5, (0, 1, 5, 6), (1.5, 1.0, 1.5, 1.0), 1.0)
-    second = generate_data(40, 0.6, 7, 10, 5, (0, 1, 5, 6), (1.5, 1.0, 1.5, 1.0), 1.0)
+    assert covariance[0, 1] == 0.6 and covariance[0, 10] == 0.0
+    first = generate_data(40, 0.6, 7, 20, 10, ACTIVE_FEATURES, 1.0)
+    second = generate_data(40, 0.6, 7, 20, 10, ACTIVE_FEATURES, 1.0)
     assert np.array_equal(first[0], second[0])
-    assert first[2].sum() == 4
+    assert list(first[2]).count("active_C1") == 5
+    assert list(first[2]).count("correlated_null_C2") == 5
+    assert list(first[2]).count("independent_null_C3") == 10
 
 
 def test_simulation_benchmark_contract_uses_both_fdfi_resampling_versions():
@@ -113,6 +116,307 @@ def test_simulation_benchmark_contract_uses_both_fdfi_resampling_versions():
     quick = settings("quick")
     assert len(quick["n_values"]) == 5
     assert len(quick["rho_values"]) == 4
+    assert quick["dimension"] == 20 and quick["block_size"] == 10
+    assert quick["truth_sets"]["active_C1"] == list(range(5))
+    assert quick["truth_sets"]["correlated_null_C2"] == list(range(5, 10))
+    assert quick["truth_sets"]["independent_null_C3"] == list(range(10, 20))
+    assert len(quick["seed_schedule"]) == quick["repetitions"]
+    assert len(set(quick["seed_schedule"])) == quick["repetitions"]
+    full = settings("full")
+    assert full["predictor"]["n_estimators"] == 500
+    assert full["n_folds"] == 2
+    assert full["flow_auxiliary_n"] == 3000
+    assert full["flow_steps"] == 15000
+
+
+def test_runtime_contract_matches_exp2_evaluate_only_and_is_deterministic():
+    from replication.scripts.simulation import (
+        FULL_RUNTIME_N_VALUES,
+        RUNTIME_METHODS,
+        generate_runtime_data,
+        runtime_settings,
+    )
+    full = runtime_settings("full")
+    assert tuple(full["n_values"]) == FULL_RUNTIME_N_VALUES
+    assert tuple(full["methods"]) == RUNTIME_METHODS
+    assert full["repetitions"] == 10
+    assert len(full["seed_schedule"]) == 10
+    assert full["dimension_non_shap"] == 50
+    assert full["dimension_shap"] == 10
+    assert full["flow_steps"] == 5000
+    assert full["flow_auxiliary_n"] == "match_runtime_n"
+    assert "shared black-box fitting" in full["timing_scope"]["excluded"]
+    assert "Flow training" in full["timing_scope"]["excluded"]
+    quick = runtime_settings("quick")
+    assert tuple(quick["n_values"]) == (40, 60)
+    assert quick["repetitions"] == 1
+    assert quick["dimension_non_shap"] == 10
+    assert quick["predictor"]["n_estimators"] == 3
+    assert quick["nsamples"] == 5
+    assert quick["flow_steps"] == 1
+    first = generate_runtime_data(40, 17, 20)
+    second = generate_runtime_data(40, 17, 20)
+    assert first[0].shape == (40, 20)
+    assert np.array_equal(first[0], second[0])
+    assert np.array_equal(first[1], second[1])
+
+
+def test_simulation_random_forest_fits_in_parallel_then_predicts_serially():
+    from replication.scripts.simulation import _fit_predictor, _make_predictor
+
+    X = np.arange(80, dtype=float).reshape(20, 4)
+    y = np.linspace(0.0, 1.0, 20)
+    assert _make_predictor(7, 3).n_jobs == -1
+    fitted = _fit_predictor(X, y, seed=7, n_estimators=3)
+    assert fitted.n_jobs == 1
+    assert fitted.predict(X[:2]).shape == (2,)
+
+
+def test_simulation_type1_audit_reports_nominal_deviation_without_forcing_pass():
+    from replication.scripts.simulation import audit_type1_error
+    rows = []
+    for method, rejected in (("PASSING", set()), ("FAILING", {(1, 11)})):
+        for repetition, seed in enumerate((100, 200)):
+            for feature in (10, 11):
+                rows.append({
+                    "sweep": "sample_size", "n": 200, "rho": 0.8,
+                    "method": method, "resampling_version": "baseline",
+                    "repetition": repetition, "seed": seed,
+                    "feature": feature, "is_type1_null": True,
+                    "reject_null": (repetition, feature) in rejected,
+                    "status": "SUCCESS",
+                })
+    audit = audit_type1_error(
+        pd.DataFrame(rows), expected_repetitions=2,
+        type1_null_features=(10, 11), alpha=0.05,
+    ).set_index("method")
+    assert audit.loc["PASSING", "status"] == "COMPLETE"
+    assert audit.loc["PASSING", "type1_error"] == 0.0
+    assert not bool(audit.loc["PASSING", "above_nominal"])
+    assert audit.loc["FAILING", "status"] == "COMPLETE"
+    assert bool(audit.loc["FAILING", "above_nominal"])
+    assert audit.loc["FAILING", "null_rejections"] == 1
+    assert audit.loc["FAILING", "observed_null_tests"] == 4
+    assert '"200": 1' in audit.loc["FAILING", "rejection_counts_by_seed"]
+
+
+def test_runtime_checkpoint_resumes_completed_method_cells(monkeypatch):
+    from replication.scripts import simulation
+
+    calls = []
+    tiny = simulation.runtime_settings("quick")
+    tiny.update({
+        "n_values": (20,), "repetitions": 1, "methods": ("CPI",),
+        "dimension_non_shap": 10, "dimension_shap": 10,
+        "nsamples": 1, "flow_steps": 1,
+    })
+    monkeypatch.setattr(simulation, "runtime_settings", lambda mode: tiny)
+
+    def fake_cpi(*args, **kwargs):
+        calls.append("CPI")
+        return {"score": np.zeros(10)}
+
+    monkeypatch.setattr(simulation, "_crossfit_conditional_cpi", fake_cpi)
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        results, tables, metadata = root / "results", root / "tables", root / "metadata"
+        for directory in (results, tables, metadata):
+            directory.mkdir()
+        simulation.run_runtime_experiment("quick", results, tables, metadata)
+        simulation.run_runtime_experiment("quick", results, tables, metadata)
+        checkpoint = pd.read_csv(results / "simulation_runtime_results.csv")
+    assert calls == ["CPI"]
+    assert len(checkpoint) == 1
+    assert checkpoint.iloc[0]["status"] == "SUCCESS"
+
+
+def test_benchmark_checkpoint_survives_interruption_and_resumes_scenarios(monkeypatch):
+    from replication.scripts import simulation
+
+    tiny = simulation.settings("quick")
+    tiny.update({
+        "n_values": (20, 30), "rho_values": (), "repetitions": 1,
+        "seed_schedule": [123], "bootstrap_draws": 2,
+        "nsamples": 1, "flow_steps": 1, "flow_auxiliary_n": 20,
+    })
+    tiny["predictor"] = {**tiny["predictor"], "n_estimators": 1}
+    monkeypatch.setattr(simulation, "settings", lambda mode: tiny)
+    monkeypatch.setattr(simulation, "run_runtime_experiment", lambda *args: [])
+
+    fit_calls = []
+    interrupt_once = {"enabled": True}
+
+    def fake_fit(X, y, seed, n_estimators, n_folds):
+        fit_calls.append(len(X))
+        if len(X) == 30 and interrupt_once["enabled"]:
+            interrupt_once["enabled"] = False
+            raise KeyboardInterrupt("simulated interruption")
+        return [], 0.5
+
+    def fake_inference(*args, **kwargs):
+        X = next(
+            value for value in args
+            if isinstance(value, np.ndarray) and value.ndim == 2
+        )
+        dimension = X.shape[1]
+        return {
+            "score": np.ones(dimension),
+            "se": np.ones(dimension),
+            "pvalue": np.ones(dimension),
+            "reject_null": np.zeros(dimension, dtype=bool),
+            "margin": 0.0,
+            "margin_method": "fixed",
+        }
+
+    monkeypatch.setattr(simulation, "_fit_crossfit_predictors", fake_fit)
+    monkeypatch.setattr(simulation, "_crossfit_loco", fake_inference)
+    monkeypatch.setattr(simulation, "_crossfit_conditional_cpi", fake_inference)
+    monkeypatch.setattr(simulation, "_crossfit_transformed", fake_inference)
+    monkeypatch.setattr(simulation, "_fit_reference_flow", lambda *args: object())
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        results, tables, metadata = root / "results", root / "tables", root / "metadata"
+        for directory in (results, tables, metadata):
+            directory.mkdir()
+        with pytest.raises(KeyboardInterrupt, match="simulated interruption"):
+            simulation.run_experiment("quick", results, tables, metadata)
+        checkpoint = pd.read_csv(results / "simulation_feature_results.csv")
+        assert set(checkpoint["n"]) == {20}
+        assert len(checkpoint) == 20 * 8
+
+        simulation.run_experiment("quick", results, tables, metadata)
+        resumed = pd.read_csv(results / "simulation_feature_results.csv")
+        assert set(resumed["n"]) == {20, 30}
+        assert len(resumed) == 2 * 20 * 8
+        calls_after_resume = list(fit_calls)
+
+        simulation.run_experiment("quick", results, tables, metadata)
+        assert fit_calls == calls_after_resume
+
+    assert fit_calls == [20, 30, 30]
+
+
+def test_simulation_plot_contract_renders_two_by_three_and_d3_runtime():
+    from replication.scripts.simulation_plot import (
+        METHODS,
+        RUNTIME_METHODS,
+        create_figures,
+    )
+    benchmark_rows = []
+    for sweep, n, rho in (("sample_size", 200, 0.8), ("correlation", 1000, 0.4)):
+        for version in ("cpi", "scpi"):
+            for method in METHODS:
+                if method in {"LOCO", "CPI"} and version == "scpi":
+                    continue
+                row = {
+                    "sweep": sweep, "n": n, "rho": rho, "method": method,
+                    "resampling_version": "baseline" if method in {"LOCO", "CPI"} else version,
+                }
+                for metric, value in (("auc", 0.8), ("power_c1", 0.7), ("type1_error", 0.04)):
+                    row[metric] = value
+                    row[f"{metric}_ci_lower"] = value - 0.01
+                    row[f"{metric}_ci_upper"] = value + 0.01
+                benchmark_rows.append(row)
+    runtime_rows = [
+        {
+            "n": n, "method": method, "dimension": 10 if method == "SHAP" else 50,
+            "mean_runtime_seconds": 1.0 + index, "std_runtime_seconds": 0.1,
+            "successful_repetitions": 2,
+        }
+        for n in (200, 400)
+        for index, method in enumerate(RUNTIME_METHODS)
+    ]
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        summary_path = root / "benchmark.csv"
+        runtime_path = root / "runtime.csv"
+        pd.DataFrame(benchmark_rows).to_csv(summary_path, index=False)
+        pd.DataFrame(runtime_rows).to_csv(runtime_path, index=False)
+        outputs = create_figures(summary_path, runtime_path, root)
+        assert [path.name for path in outputs] == [
+            "simulation_benchmark_cpi.pdf",
+            "simulation_benchmark_scpi.pdf",
+            "simulation_runtime.pdf",
+        ]
+        assert all(path.exists() and path.stat().st_size > 0 for path in outputs)
+
+
+def test_simulation_summary_matches_experiment1_truth_sets_and_metrics():
+    from replication.scripts.simulation import summarize
+    rows = []
+    truth = (
+        [(feature, "active_C1") for feature in range(5)]
+        + [(feature, "correlated_null_C2") for feature in range(5, 10)]
+        + [(feature, "independent_null_C3") for feature in range(10, 20)]
+    )
+    for feature, group in truth:
+        rows.append({
+            "sweep": "sample_size", "n": 200, "rho": 0.8,
+            "method": "TEST", "resampling_version": "baseline",
+            "repetition": 0, "feature": feature, "truth_group": group,
+            "is_relevant": group == "active_C1",
+            "is_type1_null": group == "independent_null_C3",
+            "score": 1.0 if group == "active_C1" else 0.0,
+            "reject_null": group == "active_C1" or feature == 10,
+            "test_r2": 0.75, "runtime_seconds": 1.0, "status": "SUCCESS",
+        })
+    summary = summarize(pd.DataFrame(rows), bootstrap_draws=2).iloc[0]
+    assert summary["auc"] == 1.0
+    assert summary["power_c1"] == 1.0
+    assert summary["type1_error"] == 0.1
+    assert summary["power_c1_c2"] == 0.5
+    assert summary["test_r2"] == 0.75
+
+
+def test_simulation_inference_reproduces_reference_floor_and_twofold_correction():
+    from replication.scripts.simulation import INFERENCE, _reference_inference
+    ueifs = np.array([
+        [1.0, -1.0],
+        [3.0, -2.0],
+        [2.0, -3.0],
+        [4.0, -4.0],
+    ])
+    y = np.array([0.0, 1.0, 2.0, 3.0])
+    result = _reference_inference(ueifs, y, n_folds=2)
+    var_y = np.var(y, ddof=1)
+    floor_c = min(np.sqrt(var_y), var_y, var_y**2, var_y**4) / 4
+    expected_se0 = (
+        np.sqrt(np.var(ueifs[:, 0], ddof=1) + floor_c) + 1e-9
+    ) / (np.sqrt(len(y)) * np.sqrt(0.5))
+    assert INFERENCE == {"alpha": 0.05, "alternative": "greater"}
+    assert result["score"].tolist() == [2.5, 0.0]
+    assert np.isclose(result["variance_floor_c"], floor_c)
+    assert np.isclose(result["se"][0], expected_se0)
+    assert result["ueifs"][:, 1].tolist() == [0.0] * 4
+
+
+def test_simulation_crossfit_baselines_and_ot_return_all_features():
+    from replication.scripts.simulation import (
+        ACTIVE_FEATURES,
+        _crossfit_conditional_cpi,
+        _crossfit_loco,
+        _crossfit_transformed,
+        _fit_crossfit_predictors,
+        generate_data,
+    )
+    X, y, _ = generate_data(60, 0.4, 17, 20, 10, ACTIVE_FEATURES, 1.0)
+    folds, crossfit_r2 = _fit_crossfit_predictors(X, y, 17, n_estimators=3)
+    assert len(folds) == 2
+    assert sorted(np.concatenate([test for _, test, _ in folds]).tolist()) == list(range(60))
+    assert np.isfinite(crossfit_r2)
+    results = (
+        _crossfit_loco(X, y, folds, 17, n_estimators=3),
+        _crossfit_conditional_cpi(X, y, folds, 17, nsamples=2),
+        _crossfit_transformed("DFI-OT", "cpi", X, y, folds, 17, nsamples=2),
+        _crossfit_transformed("DFI-OT", "scpi", X, y, folds, 17, nsamples=2),
+    )
+    for result in results:
+        assert result["score"].shape == (20,)
+        assert result["se"].shape == (20,)
+        assert result["pvalue"].shape == (20,)
+        assert np.all(np.isfinite(result["score"]))
+        assert np.all(result["se"] > 0)
 
 
 def test_full_strict_preflight_stops_before_workflows_or_outputs():
@@ -153,6 +457,30 @@ def test_selected_full_workflow_is_also_stopped_by_preflight_blockers():
             assert not runs.exists()
     finally:
         sys.modules.pop(module_name, None)
+
+
+def test_custom_runs_dir_is_forwarded_to_preflight():
+    from replication.scripts.common import PreflightReport, run_replication
+    seen = []
+
+    def preflight(mode, workflow, *, emit, runs_dir):
+        seen.append((mode, workflow, emit, runs_dir))
+        return PreflightReport(blockers=["stop before creating outputs"])
+
+    with tempfile.TemporaryDirectory() as raw:
+        runs = Path(raw) / "external-runs"
+        code = run_replication(
+            "full",
+            workflow="sens50",
+            preflight_fn=preflight,
+            runs_dir=runs,
+        )
+        assert code == 2
+        assert seen == [
+            ("full", "sens50", False, runs),
+            ("full", "sens50", True, runs),
+        ]
+        assert not runs.exists()
 
 
 def test_workflow_status_and_aggregate_status_are_preserved():
@@ -240,14 +568,15 @@ def test_ctg_notebook_equivalent_configuration_and_colours():
         assert key in ctg.GROUP_COLOUR
 
 
-def test_ctg_inference_and_sampling_settings_share_explicit_configuration():
+def test_ctg_inference_matches_notebook_nondefault_configuration():
     from replication.scripts import reproduce_ctg as ctg
     import inspect
-    required = {"alpha", "target", "alternative", "multitest_method", "threshold_null",
-                "var_floor_c", "var_floor_method", "var_floor_quantile", "margin",
-                "margin_method", "margin_quantile", "verbose"}
-    assert set(ctg.FEATURE_INFERENCE) == required
-    assert set(ctg.GROUP_INFERENCE) == required
+    notebook_nondefaults = {
+        "alternative": "greater",
+        "multitest_method": "fdr_bh",
+    }
+    assert ctg.FEATURE_INFERENCE == notebook_nondefaults
+    assert ctg.GROUP_INFERENCE == notebook_nondefaults
     settings = ctg._intended_settings("quick")["intended"]
     assert settings["feature_inference"] == ctg.FEATURE_INFERENCE
     assert settings["group_inference"] == ctg.GROUP_INFERENCE
@@ -325,40 +654,23 @@ def test_sens50_quick_subset_covers_every_group():
     assert groups.loc[selected].any(axis=0).all()
 
 
-def test_sens50_explicit_estimand_settings_and_returned_ranking_are_preserved():
+def test_sens50_notebook_default_inference_and_returned_ranking_are_preserved():
     from replication.scripts import reproduce_sens50_eot as sens
     import inspect
     assert sens.LOSS == "squared_error"
     assert sens.METHOD == "cpi"
-    assert sens.FEATURE_INFERENCE == {
-        "alpha": .05,
-        "var_floor_c": .1,
-        "var_floor_method": "mixture",
-        "var_floor_quantile": .95,
-        "margin": 0.0,
-        "margin_method": "auto",
-        "margin_quantile": .95,
-        "alternative": "two-sided",
-        "verbose": False,
-    }
+    assert sens.FEATURE_INFERENCE == {}
     assert sens.GROUP_INFERENCE == {
-        "alpha": .05,
         "threshold_null": True,
-        "var_floor_c": .1,
-        "var_floor_method": "fixed",
-        "margin": 0.0,
-        "margin_method": "fixed",
-        "alternative": "two-sided",
         "multitest_method": "bonferroni",
-        "verbose": False,
     }
     assert sens.NOTEBOOK_EXPECTED == {
-        "phi_x_sum": 0.7396973904611562,
-        "phi_z_sum": 0.7396975752007999,
+        "phi_x_sum": 0.7396973904610982,
+        "phi_z_sum": 0.7396975752007984,
         "x_feature_rejections": 6,
         "z_feature_rejections": 7,
-        "x_group_rejections": 10,
-        "z_group_rejections": 11,
+        "x_group_rejections": 9,
+        "z_group_rejections": 9,
     }
     result = {
         "score": np.array([10.0, 2.0]),

@@ -5,18 +5,71 @@ main JSS manuscript. It is intentionally separate from `docs/`, which contains
 documentation and tutorials.
 
 The case-study scaffold has been replaced by typed, deterministic standalone
-workflows. A draft simulation implementation now lives in `scripts/simulation.py`
-with CSV-only plotting in `scripts/simulation_plot.py`. It can produce an
-isolated quick meeting preview, but full/formal execution remains blocked until
-the authors approve the DGP, grids, repetitions, method mapping, and inference
-settings. The remaining decisions are recorded in
-`simulation_design_blockers.json`.
+workflows. The simulation in `scripts/simulation.py` reproduces the published
+Experiment 1 specification, with CSV-only plotting in
+`scripts/simulation_plot.py`. Its primary audit target is Type-I error on the
+independent null set C3. Full mode uses the published grids, 100 repetitions,
+500-tree Random Forest, two-fold cross-fitting, and 3000 auxiliary observations
+with 15000 Flow-training steps. Quick mode is only a computational smoke test.
 
 The simulation produces the three artifacts required by manuscript Section
 3.5: a benchmark using CPI scoring for OT/EOT/Flow, the corresponding benchmark
-using SCPI scoring, and a two-panel computational-cost figure. Both statistical
+using SCPI scoring, and a D3-style single-panel computational-cost figure. Both statistical
 figures retain LOCO and CPI as fixed baselines and use the manuscript legend
 `LOCO`, `CPI`, `DFI-OT`, `DFI-EOT`, and `FDFI`.
+Each benchmark is a 2-by-3 figure reporting AUC on C1 plus C3, power on C1,
+and Type-I error on C3. Rejection power on C1 plus C2 and predictive R-squared
+remain CSV diagnostics and are not method-comparison panels.
+
+The Gaussian-block DGP follows the earlier manuscript definition. C1 contains
+features 0--4, which enter the nonlinear response; C2 contains features 5--9,
+which share the first correlation block but do not enter the response; and C3
+contains features 10--49, which lie in independent blocks. Type-I error is
+computed only on C3 as the number of rejected C3 hypotheses divided by the
+number tested, separately for every sweep value, method, and resampling version.
+The quick smoke test retains this structure with features 10--19 as C3.
+
+Every simulation run writes `simulation_type1_error_audit.csv`. It records the
+null-feature indices, expected and observed test counts, raw rejection count,
+empirical Type-I error, whether it is at or above nominal alpha, all per-seed
+rejection counts, failed seeds, and a follow-up status. A missing repetition is
+`INCOMPLETE`. An above-nominal result is reported for investigation; it is not
+post-hoc adjusted or made a computational failure. Quick results exercise this
+audit but never count as formal evidence. All methods use the published one-sided zero-margin test. The
+implementation pools held-out UEIFs, zeros columns with negative mean, and
+applies the published response-variance floor and two-fold effective-sample-size
+correction; it does not use the package's automatic margin or mixture floor.
+
+Runtime is a separate Experiment 2 Gaussian-mixture study, not a timing summary
+derived from Experiment 1. It compares `CPI`, `LOCO`, `nLOCO`, `dLOCO`, `OT`,
+`EOT`, `FDFI`, and `SHAP` at n=200, 400, 600, 800, 1000, and 2500 over ten
+deterministic seeds. Non-SHAP methods use d=50 and SHAP follows the paper text
+with d=10. The evaluate-only timer excludes data generation, shared black-box
+fitting, and OT/EOT/Flow construction or training; method-specific LOCO-family
+and SHAP submodel fits remain included. Each sample-size x seed x method cell is
+atomically checkpointed so interrupted SHAP runs can resume.
+
+Runtime quick mode deliberately uses only n=40 and 60, d=10, one seed, three
+Random-Forest trees, five resamples, and one Flow-training step. It validates
+the execution and plotting contracts only; its absolute timings, relative
+method ordering, and visual trend must not be compared with Figure D3. Formal
+runtime uses the full sample-size grid, ten seeds, d=50 except SHAP d=10, 500
+trees, 50 resamples, and the Experiment 6 Flow preparation of 5000 steps on a
+training sample matching the runtime sample size.
+
+The baseline CPI reproduces the published residual conditional permutation
+using `StandardScaler` and `LassoLarsIC(criterion="bic")`. For OT, EOT, and
+Flow, `method="cpi"` and `method="scpi"` refer only to the two documented
+averaging orders. The two versions reuse the same data, folds, Random Forest
+specification, and auxiliary Flow fit.
+
+Benchmark feature rows are atomically checkpointed after every unique
+sample-size x correlation x seed scenario. Restarting the same run directory
+skips complete scenarios, retries an interrupted or failed scenario, and
+reuses the duplicated n=1000, rho=0.8 computation across the two sweeps. The
+stored settings JSON is immutable: a resume with different settings is rejected
+instead of mixing incompatible results. Benchmark summaries and the Type-I
+audit are regenerated from the complete checkpoint after all scenarios finish.
 
 ## Scope and source of truth
 

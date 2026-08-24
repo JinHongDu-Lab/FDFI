@@ -1,74 +1,47 @@
 {
-  "status": "BLOCKED",
-  "ready": false,
-  "draft_implementation_available": true,
-  "draft_files": [
-    "replication/scripts/simulation.py",
-    "replication/scripts/simulation_plot.py"
-  ],
-  "draft_scope": "Quick meeting preview only; full and formal manuscript runs remain blocked pending author approval.",
-  "latest_benchmark_requirement": {
-    "cpi_figure": "LOCO, CPI, DFI-OT, DFI-EOT, FDFI; package explainers use CPI scoring",
-    "scpi_figure": "LOCO, CPI, DFI-OT, DFI-EOT, FDFI; package explainers use SCPI scoring",
-    "runtime_figure": "one appendix computational-cost figure"
-  },
-  "last_search_date": "2026-07-21",
-  "reason": "No complete manuscript-backed executable simulation source or specification was found.",
-  "search_scope": [
-    "all repository filenames and non-PDF text",
-    "all notebook source cells",
-    "main repository Git path history",
-    "nested overleaf-fdfi-software Git path history",
-    "old ICLR manuscript and appendix",
-    "JSS manuscript source, exports, docs, tests, and rendered experiment figures"
-  ],
-  "requirement_evidence_map": [
-    {
-      "requirement": "main Gaussian dependence simulation",
-      "evidence": "overleaf-fdfi-software/FDFI/iclr2026_conference.tex lines 540-568 describes d=50, five 10-feature equicorrelation blocks, nonlinear response, Gaussian noise, varying n/rho, 100 runs and 95% bootstrap intervals",
-      "missing": "complete n and rho grids, seeds, split/fitting protocol, predictor hyperparameters, exact method implementations and bootstrap seed/rule"
-    },
-    {
-      "requirement": "non-Gaussian comparison",
-      "evidence": "same manuscript lines 1730-1782 describes a 0.2/0.8 Gaussian mixture and a separate heavy-tailed scale-mixture experiment",
-      "missing": "generating source, all estimator settings, exact random seeds, predictor training details and result aggregation code"
-    },
-    {
-      "requirement": "type-I error and power",
-      "evidence": "same manuscript lines 549-568 defines metrics, nominal alpha=0.05 and reports 100 runs",
-      "missing": "feature truth-set construction in executable form, exact p-value/inference options, multiplicity rule and finite-sample variance-floor configuration"
-    },
-    {
-      "requirement": "null distribution, coverage and noncentral reference",
-      "evidence": "theory prose near lines 1670-1680 discusses near-null variance-floor behavior",
-      "missing": "no empirical null/alternative DGP, effect size, coverage target, theoretical noncentrality calculation or plotting code"
-    },
-    {
-      "requirement": "runtime and memory",
-      "evidence": "same manuscript lines 1686-1696 states 10 repetitions and method names; rendered Computation_time.pdf exists",
-      "missing": "sample-size grid, hardware/software environment, timing boundaries, warm-up policy, memory protocol and source code"
-    },
-    {
-      "requirement": "epsilon, nsamples, flow-training and Jacobian sensitivity",
-      "evidence": "tutorial notebooks contain demonstrations, not manuscript simulation source",
-      "missing": "formal grids, fixed estimand, repetitions, seeds, metrics and acceptance criteria"
-    },
-    {
-      "requirement": "explainer coverage",
-      "evidence": "old manuscript names DFI/Gaussian OT and FDFI CPI/SCPI; current package exposes OTExplainer, EOTExplainer and FlowExplainer",
-      "missing": "authoritative mapping between old method labels and the final JSS explainer comparison, including whether EOTExplainer is required"
+  "status": "RESOLVED_FOR_EXPERIMENT_1",
+  "ready": true,
+  "decision_date": "2026-08-21",
+  "decision": "Reproduce Experiment 1 benchmarks and a separate evaluate-only Experiment 2 runtime study under the confirmed 0818meeting requirements.",
+  "confirmed_scope": {
+    "dgp": "Published 50-dimensional Gaussian block design and nonlinear response",
+    "truth_sets": "C1=0..4, C2=5..9, C3=10..49",
+    "metrics": [
+      "AUC on C1 plus C3",
+      "Power(C1)",
+      "Type-I error(C3)",
+      "Power(C1 union C2) retained in CSV only"
+    ],
+    "cross_fitting": "Two-fold KFold with held-out UEIF aggregation",
+    "predictor": "RandomForestRegressor with 500 trees and min_samples_leaf=5",
+    "baseline_cpi": "Published residual conditional permutation",
+    "inference": "Negative-mean threshold, published response-variance floor, one-sided alpha=0.05",
+    "resampling_versions": [
+      "method=cpi",
+      "method=scpi"
+    ],
+    "flow": "3000 auxiliary observations, 15000 training steps, average squared Jacobian",
+    "figures": "CPI and SCPI each use a 2-by-3 AUC, Power(C1), Type-I(C3) layout",
+    "type1_interpretation": "Report empirical C3 Type-I error against nominal alpha without post-hoc forcing",
+    "runtime": {
+      "dgp": "Experiment 2 two-component Gaussian block mixture",
+      "methods": ["CPI", "LOCO", "nLOCO", "dLOCO", "OT", "EOT", "FDFI", "SHAP"],
+      "sample_sizes": [200, 400, 600, 800, 1000, 2500],
+      "repetitions": 10,
+      "dimensions": "d=50 except SHAP d=10",
+      "timing": "evaluate-only; exclude shared model fit and OT/EOT/Flow construction or training",
+      "flow_preparation": "5000 steps on an auxiliary sample matching each runtime sample size",
+      "checkpoint": "atomic per sample-size x seed x method cell"
     }
+  },
+  "clarifications": [
+    "The meeting note about removing very small variances does not apply to this simulation.",
+    "Quick mode uses reduced computational settings and is never formal evidence.",
+    "DFI-EOT is a JSS extension rather than a method in the original Experiment 1; its existing epsilon remains explicit in code pending a separate sensitivity analysis."
   ],
-  "files_found": [
+  "primary_sources": [
     "overleaf-fdfi-software/FDFI/iclr2026_conference.tex",
-    "overleaf-fdfi-software/FDFI/Fig/Exp1/big_2x4.pdf",
-    "overleaf-fdfi-software/FDFI/Fig/Exp2/Exp2_benchmark.pdf",
-    "overleaf-fdfi-software/FDFI/Fig/Computation time/Computation_time.pdf",
-    "overleaf-fdfi-software/FDFI/Fig/RF_NN_Lasso/RF_NN_Lasso.pdf",
-    "docs/tutorials/eot_explainer.ipynb",
-    "docs/tutorials/ot_explainer.ipynb",
-    "docs/tutorials/flow_explainer.ipynb"
-  ],
-  "source_code_found": false,
-  "decision": "Do not implement or label a final simulation until authors provide the missing executable design decisions."
+    "https://github.com/ParadiseforAndaChen/FLOW-DISENTANGLED-FEATURE-IMPORTANCE/tree/main/paper/Experiment/Exp1",
+    "https://github.com/ParadiseforAndaChen/FLOW-DISENTANGLED-FEATURE-IMPORTANCE/blob/main/paper/Inference/estimators.py"
+  ]
 }

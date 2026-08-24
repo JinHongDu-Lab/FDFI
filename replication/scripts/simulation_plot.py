@@ -1,4 +1,4 @@
-"""Generate the three Section 3.5 benchmark figures from saved CSV files."""
+"""Generate the two 2x3 benchmarks and D3-style runtime figure from CSVs."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import pandas as pd
 
 
 METHODS = ("LOCO", "CPI", "DFI-OT", "DFI-EOT", "FDFI")
+RUNTIME_METHODS = ("CPI", "LOCO", "nLOCO", "dLOCO", "OT", "EOT", "FDFI", "SHAP")
 COLORS = {
     "LOCO": "#4C78A8",
     "CPI": "#F2A541",
@@ -30,11 +31,11 @@ def _select_version(summary: pd.DataFrame, version: str) -> pd.DataFrame:
 
 def _benchmark_figure(summary: pd.DataFrame, version: str, path: Path) -> None:
     data_for_version = _select_version(summary, version)
-    fig, axes = plt.subplots(2, 3, figsize=(13.2, 7.2))
+    fig, axes = plt.subplots(2, 3, figsize=(12.6, 7.2))
     metrics = (
-        ("test_r2", r"Predictive $R^2$"),
-        ("power", "Power"),
-        ("type1_error", "Type-I error"),
+        ("auc", "AUC score"),
+        ("power_c1", r"Power ($C_1$)"),
+        ("type1_error", r"Type-I error ($C_3$)"),
     )
     for row, sweep in enumerate(("sample_size", "correlation")):
         subset = data_for_version.loc[data_for_version["sweep"] == sweep]
@@ -62,7 +63,7 @@ def _benchmark_figure(summary: pd.DataFrame, version: str, path: Path) -> None:
                 axis.axhline(0.05, color="#333333", linestyle="--", linewidth=1.5, label=r"$\alpha=0.05$")
                 upper = max(0.11, float(subset[metric].max()) * 1.15)
                 axis.set_ylim(-0.005, upper)
-            elif metric == "power":
+            elif metric in {"power_c1", "auc"}:
                 axis.set_ylim(-0.02, 1.02)
             axis.set_title(title)
             axis.set_xlabel(x_label)
@@ -71,14 +72,15 @@ def _benchmark_figure(summary: pd.DataFrame, version: str, path: Path) -> None:
     handles, labels = axes[0, 0].get_legend_handles_labels()
     ref_handles, ref_labels = axes[0, 2].get_legend_handles_labels()
     if r"$\alpha=0.05$" in ref_labels:
-        ref_index = ref_labels.index(r"$\alpha=0.05$")
-        handles.append(ref_handles[ref_index]); labels.append(ref_labels[ref_index])
+        reference = ref_labels.index(r"$\alpha=0.05$")
+        handles.append(ref_handles[reference])
+        labels.append(ref_labels[reference])
     fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.985), ncol=6, frameon=False)
     title_version = version.upper()
     fig.suptitle(f"Benchmarking with {title_version} resampling", y=0.925)
     fig.text(
         0.5, 0.895,
-        "Lines show repetition means; shaded bands are 95% bootstrap intervals.",
+        "AUC uses C1 and C3 only; Type-I error uses independent null set C3; shaded bands are 95% bootstrap intervals.",
         ha="center", va="center", fontsize=9, color="#555555",
     )
     fig.tight_layout(rect=(0, 0, 1, 0.86))
@@ -87,41 +89,37 @@ def _benchmark_figure(summary: pd.DataFrame, version: str, path: Path) -> None:
 
 
 def _runtime_figure(runtime_summary: pd.DataFrame, path: Path) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(11.8, 4.6), sharey=True)
-    for axis, version in zip(axes, ("cpi", "scpi")):
-        subset = _select_version(runtime_summary, version)
-        subset = subset.loc[subset["sweep"] == "sample_size"]
-        for method in METHODS:
-            method_data = subset.loc[subset["method"] == method].sort_values("n")
-            if method_data.empty:
-                continue
-            x = method_data["n"].to_numpy(dtype=float)
-            y = method_data["mean_runtime_seconds"].to_numpy(dtype=float)
-            axis.plot(
-                x, y, marker=MARKERS[method], linestyle=LINESTYLES[method],
-                linewidth=2, markersize=5.5, color=COLORS[method], label=method,
-            )
-            axis.fill_between(
-                x,
-                method_data["mean_runtime_seconds_ci_lower"].to_numpy(dtype=float),
-                method_data["mean_runtime_seconds_ci_upper"].to_numpy(dtype=float),
-                color=COLORS[method], alpha=0.10,
-            )
-        axis.set_title(f"{version.upper()} resampling")
-        axis.set_xlabel("Sample size n")
-        axis.set_yscale("log")
-        axis.grid(color="#D9D9D9", linewidth=0.7, alpha=0.65, which="both")
-        axis.spines[["top", "right"]].set_visible(False)
-    axes[0].set_ylabel("Runtime (seconds, log scale)")
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.985), ncol=5, frameon=False)
-    fig.suptitle("Computational cost by sample size", y=0.895)
-    fig.text(
-        0.5, 0.825,
-        "Standalone wall-clock time per method; DFI/FDFI includes transformation or flow fitting and inference.",
-        ha="center", fontsize=9, color="#555555",
+    """Match reference D3: methods on x, sample size series, log-time y."""
+    fig, axis = plt.subplots(figsize=(10.5, 3.6))
+    sample_sizes = sorted(runtime_summary["n"].unique())
+    palette = plt.get_cmap("tab10")(np.arange(len(sample_sizes)))
+    method_x = np.arange(len(RUNTIME_METHODS), dtype=float)
+    offsets = np.linspace(-0.3, 0.3, len(sample_sizes)) if len(sample_sizes) > 1 else [0.0]
+    for index, (n, color, offset) in enumerate(zip(sample_sizes, palette, offsets)):
+        subset = runtime_summary.loc[runtime_summary["n"] == n].set_index("method")
+        subset = subset.reindex(RUNTIME_METHODS)
+        y = subset["mean_runtime_seconds"].to_numpy(dtype=float)
+        yerr = subset["std_runtime_seconds"].fillna(0.0).to_numpy(dtype=float)
+        valid = np.isfinite(y) & (y > 0)
+        axis.errorbar(
+            method_x[valid] + offset, y[valid], yerr=yerr[valid],
+            color=color, marker="o", linestyle="none", linewidth=0.9,
+            markersize=4.0, capsize=3, label=str(int(n)),
+        )
+    axis.set_xticks(method_x, RUNTIME_METHODS)
+    axis.set_xlabel("Methods")
+    axis.set_ylabel("Time (seconds)")
+    axis.set_yscale("log")
+    axis.grid(
+        color="#D9D9D9", linestyle="--", linewidth=0.6,
+        alpha=0.65, which="major", axis="y",
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.74))
+    axis.set_axisbelow(True)
+    axis.legend(
+        title="Sample Size", loc="upper left",
+        ncol=min(2, len(sample_sizes)), frameon=False,
+    )
+    fig.tight_layout()
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
 
@@ -131,11 +129,19 @@ def create_figures(summary_path: Path, runtime_summary_path: Path, figures_dir: 
     runtime_summary = pd.read_csv(runtime_summary_path)
     required = {
         "sweep", "n", "rho", "method", "resampling_version",
-        "test_r2", "power", "type1_error",
+        "auc", "power_c1", "type1_error",
     }
     missing = required.difference(summary.columns)
     if missing:
         raise ValueError(f"simulation benchmark summary is missing columns: {sorted(missing)}")
+    runtime_required = {
+        "n", "method", "mean_runtime_seconds", "std_runtime_seconds",
+    }
+    runtime_missing = runtime_required.difference(runtime_summary.columns)
+    if runtime_missing:
+        raise ValueError(
+            f"simulation runtime summary is missing columns: {sorted(runtime_missing)}"
+        )
     cpi_path = figures_dir / "simulation_benchmark_cpi.pdf"
     scpi_path = figures_dir / "simulation_benchmark_scpi.pdf"
     runtime_path = figures_dir / "simulation_runtime.pdf"

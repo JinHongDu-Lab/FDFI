@@ -25,11 +25,10 @@ FLOW_LEARNING_RATE = 5e-4
 FLOW_DEQUANTIZE_NOISE = 0.0
 FLOW_SOLVER = {"method": "dopri5", "rtol": 1e-3, "atol": 1e-5}
 DIAGNOSTICS_SOLVER = {"method": "dopri5", "rtol": 1e-6, "atol": 1e-8}
-FEATURE_INFERENCE = {"alpha": .05, "target": "X", "alternative": "greater",
-                     "multitest_method": "fdr_bh", "threshold_null": True,
-                     "var_floor_c": .1, "var_floor_method": "mixture",
-                     "var_floor_quantile": .95, "margin": 0.0,
-                     "margin_method": "auto", "margin_quantile": .95, "verbose": False}
+FEATURE_INFERENCE = {
+    "alternative": "greater",
+    "multitest_method": "fdr_bh",
+}
 GROUP_INFERENCE = dict(FEATURE_INFERENCE)
 NOTEBOOK_EXPECTED = {
     "observations": 2126,

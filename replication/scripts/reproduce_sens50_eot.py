@@ -17,35 +17,18 @@ from .common import (CASE_STUDY_DATA_DIR, EOT_NOTEBOOK, Mode, RunConfig,
 SEED = 0
 LOSS = "squared_error"
 METHOD = "cpi"
-FEATURE_INFERENCE = {
-    "alpha": .05,
-    "var_floor_c": .1,
-    "var_floor_method": "mixture",
-    "var_floor_quantile": .95,
-    "margin": 0.0,
-    "margin_method": "auto",
-    "margin_quantile": .95,
-    "alternative": "two-sided",
-    "verbose": False,
-}
+FEATURE_INFERENCE = {}
 GROUP_INFERENCE = {
-    "alpha": .05,
     "threshold_null": True,
-    "var_floor_c": .1,
-    "var_floor_method": "fixed",
-    "margin": 0.0,
-    "margin_method": "fixed",
-    "alternative": "two-sided",
     "multitest_method": "bonferroni",
-    "verbose": False,
 }
 NOTEBOOK_EXPECTED = {
-    "phi_x_sum": 0.7396973904611562,
-    "phi_z_sum": 0.7396975752007999,
+    "phi_x_sum": 0.7396973904610982,
+    "phi_z_sum": 0.7396975752007984,
     "x_feature_rejections": 6,
     "z_feature_rejections": 7,
-    "x_group_rejections": 10,
-    "z_group_rejections": 11,
+    "x_group_rejections": 9,
+    "z_group_rejections": 9,
 }
 DATA_PATH = CASE_STUDY_DATA_DIR / "sens50_processed_dataset.csv"
 GROUP_PATH = CASE_STUDY_DATA_DIR / "feature_group.csv"

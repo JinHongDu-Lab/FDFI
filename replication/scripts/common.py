@@ -6,6 +6,7 @@ import csv
 import hashlib
 import importlib
 import importlib.metadata
+import inspect
 import json
 import os
 import platform
@@ -296,7 +297,8 @@ def _selected(selection: WorkflowSelection) -> tuple[tuple[str, str, str], ...]:
 
 
 def preflight_check(mode: Mode = "full", workflow: WorkflowSelection = "all",
-                    *, ctg_path: Path | None = None, emit: bool = True) -> PreflightReport:
+                    *, ctg_path: Path | None = None, emit: bool = True,
+                    runs_dir: Path = RUNS_DIR) -> PreflightReport:
     """Validate readiness without training models or computing attribution."""
     report = PreflightReport()
     selected = {item[0] for item in _selected(workflow)}
@@ -369,8 +371,8 @@ def preflight_check(mode: Mode = "full", workflow: WorkflowSelection = "all",
         except Exception as exc:
             check(False, "manuscript simulation specification", repr(exc))
 
-    parent = RUNS_DIR if RUNS_DIR.exists() else RUNS_DIR.parent
-    check(os.access(parent, os.W_OK), "run staging write permission", relative(RUNS_DIR))
+    parent = runs_dir if runs_dir.exists() else runs_dir.parent
+    check(os.access(parent, os.W_OK), "run staging write permission", relative(runs_dir))
     for name in THREAD_ENV_VARS:
         check(os.environ.get(name) == "1", f"thread setting {name}",
               f"active={os.environ.get(name, 'UNSET')}, required=1",
@@ -614,13 +616,17 @@ def _publish_formal(config: RunConfig, figures_dir: Path = FIGURES_DIR,
 
 
 def _invoke_preflight(function: Callable[..., PreflightReport], mode: Mode,
-                      workflow: WorkflowSelection, emit: bool) -> PreflightReport:
-    try:
-        return function(mode, workflow, emit=emit)
-    except TypeError as exc:
-        if "emit" not in str(exc):
-            raise
-        return function(mode, workflow)
+                      workflow: WorkflowSelection, emit: bool,
+                      runs_dir: Path) -> PreflightReport:
+    parameters = inspect.signature(function).parameters.values()
+    accepts_kwargs = any(item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters)
+    names = {item.name for item in parameters}
+    options: dict[str, Any] = {}
+    if accepts_kwargs or "emit" in names:
+        options["emit"] = emit
+    if accepts_kwargs or "runs_dir" in names:
+        options["runs_dir"] = runs_dir
+    return function(mode, workflow, **options)
 
 
 def run_replication(mode: Mode, check_only: bool = False, workflow: WorkflowSelection = "all",
@@ -629,13 +635,13 @@ def run_replication(mode: Mode, check_only: bool = False, workflow: WorkflowSele
                     publish_fn: Callable[[RunConfig], list[str]] = _publish_formal,
                     runs_dir: Path = RUNS_DIR) -> int:
     if check_only:
-        return 0 if _invoke_preflight(preflight_fn, mode, workflow, True).ready else 1
+        return 0 if _invoke_preflight(preflight_fn, mode, workflow, True, runs_dir).ready else 1
     # Every full run is strict: selected workflows are useful for incremental
     # validation, but their numerical results still require the notebook-aligned
     # environment and validated inputs.
-    report = _invoke_preflight(preflight_fn, mode, workflow, False)
+    report = _invoke_preflight(preflight_fn, mode, workflow, False, runs_dir)
     if mode == "full" and not report.ready:
-        _invoke_preflight(preflight_fn, mode, workflow, True)
+        _invoke_preflight(preflight_fn, mode, workflow, True, runs_dir)
         print("Strict full preflight failed; no workflows started and no outputs modified.")
         return 2
 
@@ -650,7 +656,7 @@ def run_replication(mode: Mode, check_only: bool = False, workflow: WorkflowSele
             print(f"FDFI JSS replication\nRun ID: {config.run_id}\nMode: {mode}; workflow: {workflow}")
             print(f"Started: {datetime.now(timezone.utc).isoformat()}")
             print(f"Configuration: staging={relative(config.output_root)} seed={config.seed}")
-            _invoke_preflight(preflight_fn, mode, workflow, True)
+            _invoke_preflight(preflight_fn, mode, workflow, True, runs_dir)
             set_random_seeds(config.seed)
             environment_path = _write_environment(config)
             prior_required_stop = False

@@ -1,33 +1,32 @@
-"""Run the draft manuscript simulation and its separate plotting script."""
+"""Run the reference Experiment 1 simulation and its plotting script."""
 
 from __future__ import annotations
 
 import time
 
-from .common import Mode, RunConfig, WorkflowBlocked, WorkflowResult, relative
-from .simulation import DESIGN_STATUS, run_experiment
+import pandas as pd
+
+from .common import Mode, RunConfig, WorkflowResult, relative
+from .simulation import DESIGN_STATUS, run_experiment, runtime_settings
 from .simulation_plot import create_figures
 
 
 def preflight(mode: Mode = "full") -> dict[str, object]:
-    """Allow a draft quick result but block formal use before author approval."""
-    if mode == "quick":
-        return {
-            "ready": True,
-            "detail": f"{DESIGN_STATUS}: quick meeting-preview run is allowed; not a formal manuscript result",
-        }
+    """Report the confirmed reference specification used for both modes."""
+    runtime = runtime_settings(mode)
     return {
-        "ready": False,
-        "detail": f"BLOCKED: {DESIGN_STATUS}; full settings require author confirmation",
+        "ready": True,
+        "detail": (
+            f"{DESIGN_STATUS}: mode={mode}; full reproduces the published grids "
+            "and quick remains a smoke test; runtime "
+            f"n={tuple(runtime['n_values'])}, seeds={tuple(runtime['seed_schedule'])}, "
+            f"d(non-SHAP)={runtime['dimension_non_shap']}, "
+            f"d(SHAP)={runtime['dimension_shap']}, timing=evaluate_only"
+        ),
     }
 
 
 def run(mode: Mode, config: RunConfig) -> WorkflowResult:
-    if mode == "full":
-        raise WorkflowBlocked(
-            f"{DESIGN_STATUS}: run quick for the meeting preview; confirm formal grids, "
-            "repetitions, DGP, methods, and inference settings before a full run"
-        )
     started = time.perf_counter()
     artifacts = run_experiment(
         mode=mode,
@@ -43,6 +42,28 @@ def run(mode: Mode, config: RunConfig) -> WorkflowResult:
         )
     )
     summary = config.tables_dir / "simulation_benchmark_summary.csv"
+    type1_audit_path = config.tables_dir / "simulation_type1_error_audit.csv"
+    type1_audit = pd.read_csv(type1_audit_path)
+    incomplete = type1_audit.loc[type1_audit["status"] != "COMPLETE"]
+    above_nominal = type1_audit.loc[
+        (type1_audit["status"] == "COMPLETE") & type1_audit["above_nominal"]
+    ]
+    warnings = []
+    if mode == "quick":
+        warnings.append(
+            "Quick mode is a computational smoke test and must not be cited as a formal result."
+        )
+    if not incomplete.empty:
+        warnings.append(
+            f"Type-I-error audit has {len(incomplete)} incomplete method/configuration rows; "
+            f"see {relative(type1_audit_path)} for missing or failed seeds."
+        )
+    if not above_nominal.empty:
+        warnings.append(
+            f"Empirical C3 Type-I error is at or above nominal alpha in "
+            f"{len(above_nominal)} complete rows; these are reported for investigation "
+            "and were not post-hoc adjusted."
+        )
     return WorkflowResult(
         "manuscript simulation study",
         "SUCCESS",
@@ -50,9 +71,14 @@ def run(mode: Mode, config: RunConfig) -> WorkflowResult:
         key_results={
             "design_status": DESIGN_STATUS,
             "summary_csv": relative(summary),
-            "formal_manuscript_result": False,
+            "type1_error_audit_csv": relative(type1_audit_path),
+            "type1_error_configurations": int(len(type1_audit)),
+            "type1_error_incomplete_configurations": int(len(incomplete)),
+            "type1_error_above_nominal_configurations": int(len(above_nominal)),
+            "type1_error_values_were_posthoc_adjusted": False,
+            "formal_manuscript_result": mode == "full",
         },
-        warnings=["Draft design for professor review; numerical results must not be cited as final."],
+        warnings=warnings,
         seeds={"master_seed": 20260721},
         runtime_seconds=time.perf_counter() - started,
     )

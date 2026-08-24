@@ -41,16 +41,20 @@ matching run manifest is authoritative.
 ## Simulation status
 
 `scripts/reproduce_simulation.py` is registered as the third required stage.
-`scripts/simulation.py` and `scripts/simulation_plot.py` now produce a clearly
-labelled draft quick preview for author discussion; full/formal execution still
-returns `BLOCKED`. A repository-wide filename/text/notebook and Git path-history
-audit found no authoritative simulation-generating source. An older ICLR manuscript describes part of a
-50-dimensional block-Gaussian experiment, but no generating program or complete
-JSS specification was found. Missing seeds, grids, predictor/flow settings,
-formal null/alternative calibration, coverage/noncentral references,
-sensitivity grids, and benchmark measurement rules are enumerated in
-`simulation_design_blockers.json`. Rendered PDFs are not treated as source.
-That JSON now contains a requirement-to-evidence-to-missing-parameter map.
+`scripts/simulation.py` and `scripts/simulation_plot.py` reproduce the original
+Experiment 1 DGP, grids, two-fold inference, conditional CPI baseline,
+variance-floor calculation, and 2-by-3 summaries. The public experiment and
+estimator source supplied the previously missing executable specification, and
+the author confirmed that CPI/SCPI mean the two package averaging orders.
+`simulation_design_blockers.json` records the resolved specification and the
+remaining EOT-specific extension note. Quick mode remains a smoke test; full
+mode is the formal 100-repetition specification.
+
+Both long-running studies are resumable. Experiment 1 atomically checkpoints
+each unique sample-size x correlation x seed scenario; Experiment 2 atomically
+checkpoints each sample-size x seed x method cell. A run directory is bound to
+its stored settings contract so results from incompatible configurations cannot
+be combined accidentally.
 
 Current Section 3.5 simulation outputs are:
 
@@ -58,8 +62,8 @@ Current Section 3.5 simulation outputs are:
   with the three package explainers using CPI scoring;
 - `figures/simulation_benchmark_scpi.pdf`: the same legend and fixed baselines,
   with the three package explainers using SCPI scoring;
-- `figures/simulation_runtime.pdf`: standalone method runtime by sample size,
-  with CPI and SCPI panels;
+- `figures/simulation_runtime.pdf`: separate Experiment 2 evaluate-only runtime
+  for CPI, LOCO, nLOCO, dLOCO, OT, EOT, FDFI, and SHAP on a log-second axis;
 - feature-level, runtime, benchmark-summary and runtime-summary CSV sources.
 
 ## Computational tables and numerical results
