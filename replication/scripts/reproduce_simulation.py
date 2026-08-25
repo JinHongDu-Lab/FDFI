@@ -17,6 +17,7 @@ def preflight(mode: Mode = "full") -> dict[str, object]:
     stage = {
         "quick": "quick is a smoke test",
         "review": "review uses the full grids with 10 benchmark repetitions and 1 runtime seed",
+        "one_seed": "one_seed uses the full grids with 1 shared benchmark and runtime seed",
         "full": "full reproduces the manuscript protocol",
     }[mode]
     return {
@@ -61,6 +62,11 @@ def run(mode: Mode, config: RunConfig) -> WorkflowResult:
         warnings.append(
             "Professor review stage: benchmarking uses 10 repetitions and runtime uses "
             "one seed; these results are preliminary and must not be cited as final."
+        )
+    elif mode == "one_seed":
+        warnings.append(
+            "Professor one-seed consistency check: all results use one shared seed; "
+            "these results are preliminary and must not be cited as final."
         )
     if not incomplete.empty:
         warnings.append(

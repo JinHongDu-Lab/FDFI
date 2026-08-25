@@ -8,7 +8,9 @@ black-box fitting and OT/EOT/Flow construction or training are excluded.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import random
 import tempfile
 import time
@@ -40,6 +42,7 @@ FULL_N_VALUES = (200, 400, 600, 800, 1000)
 FULL_RHO_VALUES = (0.4, 0.6, 0.8)
 FULL_REPETITIONS = 100
 REVIEW_REPETITIONS = 10
+ONE_SEED_REPETITIONS = 1
 QUICK_N_VALUES = (80, 100, 120, 160, 200)
 QUICK_RHO_VALUES = (0.2, 0.4, 0.6, 0.8)
 QUICK_REPETITIONS = 2
@@ -80,9 +83,12 @@ INFERENCE = {"alpha": ALPHA, "alternative": "greater"}
 def settings(mode: str) -> dict[str, object]:
     quick = mode == "quick"
     review = mode == "review"
+    one_seed = mode == "one_seed"
     repetitions = (
         QUICK_REPETITIONS
         if quick
+        else ONE_SEED_REPETITIONS
+        if one_seed
         else REVIEW_REPETITIONS if review else FULL_REPETITIONS
     )
     cfg = {
@@ -96,6 +102,8 @@ def settings(mode: str) -> dict[str, object]:
         "execution_stage": (
             "quick_smoke_test"
             if quick
+            else "professor_one_seed_consistency_check"
+            if one_seed
             else "professor_review_stage_1" if review else "formal_manuscript"
         ),
         "master_seed": MASTER_SEED,
@@ -160,9 +168,12 @@ def runtime_settings(mode: str) -> dict[str, object]:
     """Return the independent Experiment 2 runtime contract."""
     quick = mode == "quick"
     review = mode == "review"
+    one_seed = mode == "one_seed"
     repetitions = (
         QUICK_RUNTIME_REPETITIONS
         if quick
+        else ONE_SEED_REPETITIONS
+        if one_seed
         else REVIEW_RUNTIME_REPETITIONS if review else FULL_RUNTIME_REPETITIONS
     )
     return {
@@ -171,6 +182,8 @@ def runtime_settings(mode: str) -> dict[str, object]:
         "execution_stage": (
             "quick_smoke_test"
             if quick
+            else "professor_one_seed_consistency_check"
+            if one_seed
             else "professor_review_stage_1" if review else "formal_manuscript"
         ),
         "master_seed": MASTER_SEED,
@@ -1138,6 +1151,51 @@ def run_experiment(mode: str, results_dir: Path, tables_dir: Path, metadata_dir:
     result_path = results_dir / "simulation_feature_results.csv"
     summary_path = tables_dir / "simulation_benchmark_summary.csv"
     type1_audit_path = tables_dir / "simulation_type1_error_audit.csv"
+    bootstrap_metadata_path: Path | None = None
+    source_checkpoint = os.environ.get("FDFI_ONE_SEED_SOURCE_CHECKPOINT")
+    if mode == "one_seed" and source_checkpoint and not result_path.exists():
+        source_path = Path(source_checkpoint).expanduser().resolve()
+        if not source_path.is_file():
+            raise FileNotFoundError(f"one-seed source checkpoint does not exist: {source_path}")
+        source_results = pd.read_csv(source_path)
+        missing = set(BENCHMARK_RESULT_COLUMNS).difference(source_results.columns)
+        if missing:
+            raise ValueError(
+                f"one-seed source checkpoint is missing columns: {sorted(missing)}"
+            )
+        allowed = {
+            (str(item["sweep"]), int(item["n"]), float(item["rho"]))
+            for item in _scenarios(cfg)
+        }
+        first_seed = int(cfg["seed_schedule"][0])
+        imported_groups: list[pd.DataFrame] = []
+        for (sweep, n, rho, seed), group in source_results.groupby(
+            ["sweep", "n", "rho", "seed"], sort=False
+        ):
+            key = (str(sweep), int(n), float(rho))
+            if int(seed) != first_seed or key not in allowed:
+                continue
+            group = group.loc[:, list(BENCHMARK_RESULT_COLUMNS)].copy()
+            if _benchmark_scenario_complete(group, int(cfg["dimension"])):
+                imported_groups.append(group)
+        imported = (
+            pd.concat(imported_groups, ignore_index=True)
+            if imported_groups
+            else pd.DataFrame(columns=BENCHMARK_RESULT_COLUMNS)
+        )
+        _atomic_write_csv(imported, result_path)
+        bootstrap_metadata_path = metadata_dir / "one_seed_checkpoint_import.json"
+        _write_or_validate_json_contract(
+            {
+                "source_path": str(source_path),
+                "source_sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
+                "selected_seed": first_seed,
+                "imported_rows": int(len(imported)),
+                "imported_complete_scenarios": int(len(imported_groups)),
+                "policy": "complete compatible first-seed scenarios only",
+            },
+            bootstrap_metadata_path,
+        )
     if result_path.exists():
         feature_results = pd.read_csv(result_path)
         missing = set(BENCHMARK_RESULT_COLUMNS).difference(feature_results.columns)
@@ -1323,5 +1381,7 @@ def run_experiment(mode: str, results_dir: Path, tables_dir: Path, metadata_dir:
     _atomic_write_csv(summary, summary_path)
     _atomic_write_csv(type1_audit, type1_audit_path)
     artifacts = [metadata_path, result_path, summary_path, type1_audit_path]
+    if bootstrap_metadata_path is not None:
+        artifacts.append(bootstrap_metadata_path)
     artifacts.extend(run_runtime_experiment(mode, results_dir, tables_dir, metadata_dir))
     return artifacts

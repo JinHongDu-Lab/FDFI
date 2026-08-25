@@ -78,6 +78,13 @@ its internal 100 Monte Carlo draws. Review outputs are isolated, resumable, and
 explicitly marked preliminary; the original 100-repetition/10-seed `full`
 contract remains unchanged.
 
+`python reproduce_one_seed.py --runs-dir <path>` runs the professor-requested
+consistency check with one shared seed across the full benchmark and runtime
+grids. `--source-feature-checkpoint <csv>` may reuse only complete, compatible
+rows for that selected seed from a prior review checkpoint; the source hash and
+import counts are recorded in metadata. One-seed outputs are preliminary and
+do not replace the manuscript protocol.
+
 ## Scope and source of truth
 
 Following the project meeting, this replication package is aligned primarily
