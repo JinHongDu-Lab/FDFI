@@ -14,11 +14,15 @@ from .simulation_plot import create_figures
 def preflight(mode: Mode = "full") -> dict[str, object]:
     """Report the confirmed reference specification used for both modes."""
     runtime = runtime_settings(mode)
+    stage = {
+        "quick": "quick is a smoke test",
+        "review": "review uses the full grids with 10 benchmark repetitions and 1 runtime seed",
+        "full": "full reproduces the manuscript protocol",
+    }[mode]
     return {
         "ready": True,
         "detail": (
-            f"{DESIGN_STATUS}: mode={mode}; full reproduces the published grids "
-            "and quick remains a smoke test; runtime "
+            f"{DESIGN_STATUS}: mode={mode}; {stage}; runtime "
             f"n={tuple(runtime['n_values'])}, seeds={tuple(runtime['seed_schedule'])}, "
             f"d(non-SHAP)={runtime['dimension_non_shap']}, "
             f"d(SHAP)={runtime['dimension_shap']}, timing=evaluate_only"
@@ -52,6 +56,11 @@ def run(mode: Mode, config: RunConfig) -> WorkflowResult:
     if mode == "quick":
         warnings.append(
             "Quick mode is a computational smoke test and must not be cited as a formal result."
+        )
+    elif mode == "review":
+        warnings.append(
+            "Professor review stage: benchmarking uses 10 repetitions and runtime uses "
+            "one seed; these results are preliminary and must not be cited as final."
         )
     if not incomplete.empty:
         warnings.append(

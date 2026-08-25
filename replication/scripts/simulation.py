@@ -39,6 +39,7 @@ FIXED_N = 1000
 FULL_N_VALUES = (200, 400, 600, 800, 1000)
 FULL_RHO_VALUES = (0.4, 0.6, 0.8)
 FULL_REPETITIONS = 100
+REVIEW_REPETITIONS = 10
 QUICK_N_VALUES = (80, 100, 120, 160, 200)
 QUICK_RHO_VALUES = (0.2, 0.4, 0.6, 0.8)
 QUICK_REPETITIONS = 2
@@ -56,6 +57,7 @@ RUNTIME_METHODS = ("CPI", "LOCO", "nLOCO", "dLOCO", "OT", "EOT", "FDFI", "SHAP")
 FULL_RUNTIME_N_VALUES = (200, 400, 600, 800, 1000, 2500)
 QUICK_RUNTIME_N_VALUES = (40, 60)
 FULL_RUNTIME_REPETITIONS = 10
+REVIEW_RUNTIME_REPETITIONS = 1
 QUICK_RUNTIME_REPETITIONS = 1
 RUNTIME_DIMENSION = 50
 SHAP_DIMENSION = 10
@@ -77,7 +79,12 @@ INFERENCE = {"alpha": ALPHA, "alternative": "greater"}
 
 def settings(mode: str) -> dict[str, object]:
     quick = mode == "quick"
-    repetitions = QUICK_REPETITIONS if quick else FULL_REPETITIONS
+    review = mode == "review"
+    repetitions = (
+        QUICK_REPETITIONS
+        if quick
+        else REVIEW_REPETITIONS if review else FULL_REPETITIONS
+    )
     cfg = {
         "design_status": DESIGN_STATUS,
         "benchmark_requirement": {
@@ -86,6 +93,11 @@ def settings(mode: str) -> dict[str, object]:
             "runtime_figure": "one D3-style single-panel computational-cost figure",
         },
         "mode": mode,
+        "execution_stage": (
+            "quick_smoke_test"
+            if quick
+            else "professor_review_stage_1" if review else "formal_manuscript"
+        ),
         "master_seed": MASTER_SEED,
         "alpha": ALPHA,
         # The quick mode retains one complete 10-feature signal/correlated-null
@@ -147,10 +159,20 @@ def settings(mode: str) -> dict[str, object]:
 def runtime_settings(mode: str) -> dict[str, object]:
     """Return the independent Experiment 2 runtime contract."""
     quick = mode == "quick"
-    repetitions = QUICK_RUNTIME_REPETITIONS if quick else FULL_RUNTIME_REPETITIONS
+    review = mode == "review"
+    repetitions = (
+        QUICK_RUNTIME_REPETITIONS
+        if quick
+        else REVIEW_RUNTIME_REPETITIONS if review else FULL_RUNTIME_REPETITIONS
+    )
     return {
         "design": "Experiment 2 two-component Gaussian mixture",
         "mode": mode,
+        "execution_stage": (
+            "quick_smoke_test"
+            if quick
+            else "professor_review_stage_1" if review else "formal_manuscript"
+        ),
         "master_seed": MASTER_SEED,
         "n_values": QUICK_RUNTIME_N_VALUES if quick else FULL_RUNTIME_N_VALUES,
         "repetitions": repetitions,

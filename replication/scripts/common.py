@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal, Sequence, TextIO
 
-Mode = Literal["full", "quick"]
+Mode = Literal["full", "review", "quick"]
 Status = Literal["SUCCESS", "FAILED", "BLOCKED", "SKIPPED"]
 WorkflowSelection = Literal["all", "sens50", "ctg", "simulation"]
 
@@ -320,7 +320,7 @@ def preflight_check(mode: Mode = "full", workflow: WorkflowSelection = "all",
     if dirty_files:
         check(False, "Git clean-worktree requirement",
               f"{len(dirty_files)} dirty/untracked entries; final full/all runs require a clean tree",
-              warning=mode == "quick" or workflow != "all")
+              warning=mode == "quick")
 
     pins = _pinned_versions()
     for name, expected in pins.items():
@@ -376,7 +376,7 @@ def preflight_check(mode: Mode = "full", workflow: WorkflowSelection = "all",
     for name in THREAD_ENV_VARS:
         check(os.environ.get(name) == "1", f"thread setting {name}",
               f"active={os.environ.get(name, 'UNSET')}, required=1",
-              warning=mode == "quick" or workflow != "all")
+              warning=mode == "quick")
     if emit and report.blockers:
         print("\nUnresolved blocking requirements:")
         for blocker in report.blockers:
@@ -489,7 +489,8 @@ def _run_provenance(workflow: WorkflowSelection, config: RunConfig) -> dict[str,
     if "ctg" in selected: data_paths += [DATA_DIR / "CTG.xls"]
     notebook_paths = [EOT_NOTEBOOK, CTG_NOTEBOOK]
     execution_paths = [
-        REPLICATION_DIR / "reproduce.py", REPLICATION_DIR / "reproduce_quick.py",
+        REPLICATION_DIR / "reproduce.py", REPLICATION_DIR / "reproduce_review.py",
+        REPLICATION_DIR / "reproduce_quick.py",
         REPLICATION_DIR / "scripts/common.py", REPLICATION_DIR / "scripts/reproduce_sens50_eot.py",
         REPLICATION_DIR / "scripts/reproduce_ctg.py", REPLICATION_DIR / "scripts/reproduce_simulation.py",
         REPLICATION_DIR / "scripts/fetch_ctg.py", REPLICATION_DIR / "environment.yml",
@@ -640,9 +641,9 @@ def run_replication(mode: Mode, check_only: bool = False, workflow: WorkflowSele
     # validation, but their numerical results still require the notebook-aligned
     # environment and validated inputs.
     report = _invoke_preflight(preflight_fn, mode, workflow, False, runs_dir)
-    if mode == "full" and not report.ready:
+    if mode in {"full", "review"} and not report.ready:
         _invoke_preflight(preflight_fn, mode, workflow, True, runs_dir)
-        print("Strict full preflight failed; no workflows started and no outputs modified.")
+        print(f"Strict {mode} preflight failed; no workflows started and no outputs modified.")
         return 2
 
     config = RunConfig.create(mode, runs_dir=runs_dir)
@@ -715,6 +716,8 @@ def run_replication(mode: Mode, check_only: bool = False, workflow: WorkflowSele
                 print(f"Published formal artifacts: {published}")
             elif mode == "full":
                 print("Formal outputs were not published.")
+            elif mode == "review":
+                print("Review-stage outputs remain isolated and were not formally published.")
             log_handle.flush()
             manifest_path = config.metadata_dir / "run_manifest.json"
             print(f"Run manifest: {relative(manifest_path)}")

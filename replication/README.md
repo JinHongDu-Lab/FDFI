@@ -71,6 +71,13 @@ stored settings JSON is immutable: a resume with different settings is rejected
 instead of mixing incompatible results. Benchmark summaries and the Type-I
 audit are regenerated from the complete checkpoint after all scenarios finish.
 
+`python reproduce_review.py --runs-dir <path>` runs the professor-requested
+first review stage: the full benchmark grids with 10 repetitions and the full
+runtime method/sample-size grid with one shared seed. SHAP retains `d=10` and
+its internal 100 Monte Carlo draws. Review outputs are isolated, resumable, and
+explicitly marked preliminary; the original 100-repetition/10-seed `full`
+contract remains unchanged.
+
 ## Scope and source of truth
 
 Following the project meeting, this replication package is aligned primarily

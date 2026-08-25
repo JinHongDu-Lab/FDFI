@@ -84,11 +84,14 @@ def test_sens50_formal_paths_use_fixed_case_study_data():
 def test_simulation_preflight_uses_confirmed_reference_specification():
     from replication.scripts import reproduce_simulation
     quick = reproduce_simulation.preflight("quick")
+    review = reproduce_simulation.preflight("review")
     full = reproduce_simulation.preflight("full")
     assert quick["ready"] is True
     assert "smoke test" in str(quick["detail"])
+    assert review["ready"] is True
+    assert "10 benchmark repetitions and 1 runtime seed" in str(review["detail"])
     assert full["ready"] is True
-    assert "published grids" in str(full["detail"])
+    assert "manuscript protocol" in str(full["detail"])
 
 
 def test_simulation_block_covariance_and_relevant_features_are_deterministic():
@@ -123,7 +126,14 @@ def test_simulation_benchmark_contract_uses_both_fdfi_resampling_versions():
     assert len(quick["seed_schedule"]) == quick["repetitions"]
     assert len(set(quick["seed_schedule"])) == quick["repetitions"]
     full = settings("full")
+    review = settings("review")
+    assert full["repetitions"] == 100
+    assert review["repetitions"] == 10
+    assert review["execution_stage"] == "professor_review_stage_1"
+    assert tuple(review["n_values"]) == tuple(full["n_values"])
+    assert tuple(review["rho_values"]) == tuple(full["rho_values"])
     assert full["predictor"]["n_estimators"] == 500
+    assert review["predictor"] == full["predictor"]
     assert full["n_folds"] == 2
     assert full["flow_auxiliary_n"] == 3000
     assert full["flow_steps"] == 15000
@@ -147,6 +157,15 @@ def test_runtime_contract_matches_exp2_evaluate_only_and_is_deterministic():
     assert full["flow_auxiliary_n"] == "match_runtime_n"
     assert "shared black-box fitting" in full["timing_scope"]["excluded"]
     assert "Flow training" in full["timing_scope"]["excluded"]
+    review = runtime_settings("review")
+    assert tuple(review["n_values"]) == FULL_RUNTIME_N_VALUES
+    assert review["repetitions"] == 1
+    assert review["seed_schedule"] == full["seed_schedule"][:1]
+    assert review["dimension_non_shap"] == 50
+    assert review["dimension_shap"] == 10
+    assert review["shapley_mc_draws"] == 100
+    assert review["flow_steps"] == 5000
+    assert review["execution_stage"] == "professor_review_stage_1"
     quick = runtime_settings("quick")
     assert tuple(quick["n_values"]) == (40, 60)
     assert quick["repetitions"] == 1
@@ -459,6 +478,28 @@ def test_selected_full_workflow_is_also_stopped_by_preflight_blockers():
         sys.modules.pop(module_name, None)
 
 
+def test_review_stage_is_strict_and_stops_before_outputs():
+    from replication.scripts.common import PreflightReport, run_replication
+    called = []
+    module_name = "tests.fake_review_never_runs"
+    sys.modules[module_name] = SimpleNamespace(run=lambda **kwargs: called.append(True))
+    try:
+        with tempfile.TemporaryDirectory() as raw:
+            runs = Path(raw) / "runs"
+            code = run_replication(
+                "review",
+                workflow="simulation",
+                workflow_defs=(("simulation", "fake", module_name),),
+                preflight_fn=lambda *args: PreflightReport(blockers=["blocked"]),
+                runs_dir=runs,
+            )
+            assert code == 2
+            assert called == []
+            assert not runs.exists()
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_custom_runs_dir_is_forwarded_to_preflight():
     from replication.scripts.common import PreflightReport, run_replication
     seen = []
@@ -549,6 +590,42 @@ def test_success_log_and_manifest_exclude_stale_artifacts():
             assert inputs["sens50_processed_dataset.csv"]["sha256"]
             assert inputs["feature_group.csv"]["sha256"]
             assert manifest["workflows"][0]["process_peak_memory_mb"] is not None
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_review_stage_manifest_is_preliminary_and_never_published():
+    from replication.scripts.common import PreflightReport, WorkflowResult, run_replication
+
+    module_name = "tests.fake_review_success"
+
+    def fake_run(mode, config):
+        assert mode == "review"
+        path = config.tables_dir / "review.csv"
+        path.write_text("x\n1\n", encoding="utf-8")
+        return WorkflowResult("review stage", "SUCCESS", generated_files=[str(path)])
+
+    sys.modules[module_name] = SimpleNamespace(run=fake_run)
+    try:
+        with tempfile.TemporaryDirectory() as raw:
+            runs = Path(raw) / "runs"
+            code = run_replication(
+                "review",
+                workflow="simulation",
+                workflow_defs=(("simulation", "review stage", module_name),),
+                preflight_fn=lambda *args: PreflightReport(),
+                runs_dir=runs,
+            )
+            assert code == 0
+            run_dir = next(runs.iterdir())
+            manifest = json.loads(
+                (run_dir / "metadata/run_manifest.json").read_text(encoding="utf-8")
+            )
+            assert manifest["mode"] == "review"
+            assert manifest["workflow_selection"] == "simulation"
+            assert manifest["formal_manuscript_run"] is False
+            assert manifest["publication_attempted"] is False
+            assert manifest["publication_succeeded"] is False
     finally:
         sys.modules.pop(module_name, None)
 
