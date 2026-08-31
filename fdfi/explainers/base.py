@@ -137,21 +137,28 @@ class Explainer:
         ``L = self._loss``.  Two averaging orders (formalised in the FDFI docs)
         are selected via ``method``:
 
-        - ``'cpi'`` (Conditional Permutation Importance): average the
-          counterfactual *prediction* over the Monte-Carlo replicates first,
-          then apply the loss — ``L(r, E_b[ŷ_b])``.
-        - ``'scpi'`` (Sobol-CPI): apply the loss to *each* replicate first, then
-          average — ``E_b[L(r, ŷ_b)]``.
+        - ``'cpi'`` (the normalized FDFI convention): apply the loss to each
+          replicate, average the loss differences, and multiply by one half —
+          ``0.5 * E_b[L(r, ŷ_b) - L(r, ŷ)]``.
+        - ``'scpi'`` (Sobol-CPI): average the counterfactual predictions first,
+          then apply the loss — ``L(r, E_b[ŷ_b]) - L(r, ŷ)``.
+
+        The factor one half makes CPI target the same population quantity as
+        SCPI under squared loss, an exact disentangling map, and a Bayes
+        predictor.  It is the normalization used by the FDFI paper; conventional
+        (unnormalized) CPI is twice this value.
 
         When ``y_true`` is provided the score is a difference of losses (the DFI
         / LOCO form, centred near zero for null features)::
 
-            UEIF = agg_b L(y_true, ŷ_b) - L(y_true, ŷ)
+            CPI  = 0.5 * E_b[L(y_true, ŷ_b) - L(y_true, ŷ)]
+            SCPI = L(y_true, E_b[ŷ_b]) - L(y_true, ŷ)
 
         Otherwise it is the label-free form that uses the model's own prediction
         ``ŷ`` as the reference and subtracts the self-loss floor::
 
-            UEIF = agg_b L(ŷ, ŷ_b) - L(ŷ, ŷ)
+            CPI  = 0.5 * E_b[L(ŷ, ŷ_b) - L(ŷ, ŷ)]
+            SCPI = L(ŷ, E_b[ŷ_b]) - L(ŷ, ŷ)
 
         For the squared error (and other losses with ``L(a, a) = 0``) this is the
         prediction shift ``(ŷ - ŷ_b)²``.  For a proper scoring rule such as
@@ -196,11 +203,12 @@ class Explainer:
             base = loss(ref, y_pred)
 
         if method == "cpi":
-            agg = loss(ref, y_tilde_all.mean(axis=0))
-        else:  # scpi
-            agg = loss(ref[None, :], y_tilde_all).mean(axis=0)
+            perturbed = loss(ref[None, :], y_tilde_all).mean(axis=0)
+            return 0.5 * (perturbed - base)
 
-        return agg - base
+        # Sobol-CPI estimates the restricted prediction by averaging the
+        # counterfactual predictions before evaluating the loss.
+        return loss(ref, y_tilde_all.mean(axis=0)) - base
 
 
     def _adjust_se(

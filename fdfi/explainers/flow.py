@@ -14,8 +14,8 @@ class FlowExplainer(Explainer):
     Implements CPI (Conditional Permutation Importance) and 
     SCPI (Sobol-CPI) methods. Both measure feature importance in Z-space:
 
-    - CPI: Squared difference after averaging predictions: (Y - E[f(X_tilde)])^2
-    - SCPI: Conditional variance of predictions: Var[f(X_tilde)]
+    - CPI: one half the average per-resample loss difference
+    - SCPI: loss difference after averaging counterfactual predictions
     
     For L2 loss with independent (disentangled) features, CPI and SCPI give
     similar results. SCPI is related to the Sobol total-order sensitivity index.
@@ -46,8 +46,8 @@ class FlowExplainer(Explainer):
         Regressor for conditional permutation method. Defaults to LinearRegression.
     method : str, default='cpi'
         Which importance method to use:
-        - 'cpi': Conditional Permutation Importance - average predictions first
-        - 'scpi': Sobol-CPI - average squared differences
+        - 'cpi': normalized CPI - half the average loss difference
+        - 'scpi': Sobol-CPI - average predictions before applying the loss
         - 'both': Compute both CPI and SCPI
     random_state : int, optional
         Random seed for reproducibility.
@@ -436,10 +436,11 @@ class FlowExplainer(Explainer):
         Both scores use the counterfactual predictions for feature ``j`` but
         differ in the averaging order:
 
-        - CPI: average the prediction first, then apply the loss
-          ``L(r, E_b[Ỹ])``.
-        - SCPI: apply the loss per Monte-Carlo replicate first, then average
-          ``E_b[L(r, Ỹ)]``.
+        - CPI: apply the loss per Monte-Carlo replicate, average the loss
+          differences, and multiply by one half
+          ``0.5 * E_b[L(r, Ỹ) - L(r, y)]``.
+        - SCPI: average the prediction first, then apply the loss difference
+          ``L(r, E_b[Ỹ]) - L(r, y)``.
 
         Here ``r`` is ``y_true`` when supplied (loss-difference / DFI form) or
         the baseline prediction ``y`` otherwise (prediction-shift form, defined
@@ -509,16 +510,14 @@ class FlowExplainer(Explainer):
             y_tilde_flat = self.model(X_tilde_flat)
             y_tilde = y_tilde_flat.reshape(self.nsamples, n)
             
-            # CPI: average the prediction first, then apply the loss.
-            #   φ_j^CPI = L(r, E_b[Ỹ])   with r = y_true or the baseline prediction
+            # Normalized CPI: average per-resample loss differences, then / 2.
+            #   φ_j^CPI = 0.5 E_b[L(r, Ỹ) - L(r, y)]
             ueifs_cpi[:, j] = self._ueif_from_counterfactuals(
                 y, y_tilde, method="cpi", y_true=y_true
             )
             
-            # SCPI (Sobol-CPI): apply the loss per replicate, then average.
-            #   φ_j^SCPI = E_b[L(r, Ỹ)]
-            # For squared error this equals CPI + Var_b(Ỹ), matching the
-            # documented SCPI = E_b[(Y - f(X̃_b))²].
+            # SCPI (Sobol-CPI): average predictions before applying the loss.
+            #   φ_j^SCPI = L(r, E_b[Ỹ]) - L(r, y)
             ueifs_scpi[:, j] = self._ueif_from_counterfactuals(
                 y, y_tilde, method="scpi", y_true=y_true
             )

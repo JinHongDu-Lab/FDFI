@@ -39,9 +39,9 @@ Loss Functions
 --------------
 
 The importance score is defined through a per-sample loss ``L(y_true, y_pred)``.
-All working explainers accept a ``loss`` argument (default: squared error, which
-recovers the classic difference of L2 residuals) and a ``method`` argument
-(``'cpi'`` or ``'scpi'``) controlling the averaging order.
+All working explainers accept a ``loss`` argument (default: squared error) and a
+``method`` argument (``'cpi'`` or ``'scpi'``) selecting the resampling
+functional defined below.
 
 - **Regression losses:** ``'squared_error'`` (``'l2'``/``'mse'``),
   ``'absolute_error'`` (``'l1'``/``'mae'``), ``'huber'``, ``'pinball'``.
@@ -170,15 +170,20 @@ Flow-Based DFI (FlowExplainer)
 
 The ``FlowExplainer`` implements Flow-Disentangled Feature Importance using 
 normalizing flows. It supports both CPI (Conditional Permutation Importance) 
-and SCPI (Sobol-CPI). The key difference is the order of averaging:
+and SCPI (Sobol-CPI), using the definitions in the FDFI paper:
 
-- **CPI**: Average the prediction first, then apply the loss:
-  :math:`L\big(Y, \mathbb{E}_b[f(\tilde{X}_b)]\big)`
-- **SCPI**: Apply the loss per sample first, then average:
-  :math:`\mathbb{E}_b\big[L\big(Y, f(\tilde{X}_b)\big)\big]`
+- **CPI**: Average per-resample loss differences and multiply by one half:
+  :math:`\tfrac12\mathbb{E}_b[L(Y,f(\tilde X_b))-L(Y,f(X))]`.
+- **SCPI**: Average the counterfactual predictions before applying the loss:
+  :math:`L(Y,\mathbb{E}_b[f(\tilde X_b)])-L(Y,f(X))`.
 
-Both use the configurable ``loss`` (default squared error); for the squared-error
-loss, :math:`\phi^{SCPI} = \phi^{CPI} + \mathrm{Var}_b[f(\tilde{X}_b)]`.
+Both use the configurable ``loss`` (default squared error). For the same finite
+Monte Carlo draws and squared-error loss,
+:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]`.
+With an exact disentangling map and a Bayes predictor, CPI and infinite-resample
+SCPI estimate the same population importance. Conventional CPI in the broader
+CPI literature omits the one-half normalization and is therefore twice the
+package's CPI.
 
 .. autoclass:: fdfi.explainers.FlowExplainer
    :members:

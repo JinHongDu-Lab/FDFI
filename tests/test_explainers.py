@@ -61,6 +61,61 @@ class TestExplainer:
         with pytest.raises(NotImplementedError):
             explainer.shap_values(X)
 
+    def test_cpi_matches_normalized_fdfi_formula(self):
+        """CPI is one half of the mean per-resample loss difference."""
+        explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
+        y_pred = np.array([0.0, 1.0, 2.0])
+        y_true = np.array([1.0, 3.0, -1.0])
+        y_tilde = np.array([
+            [2.0, 2.0, 0.0],
+            [4.0, -1.0, 3.0],
+        ])
+
+        actual = explainer._ueif_from_counterfactuals(
+            y_pred, y_tilde, method="cpi", y_true=y_true
+        )
+        base = (y_true - y_pred) ** 2
+        expected = 0.5 * (((y_true[None, :] - y_tilde) ** 2).mean(axis=0) - base)
+
+        assert np.allclose(actual, expected)
+
+    def test_scpi_matches_prediction_first_formula(self):
+        """SCPI applies the loss after averaging counterfactual predictions."""
+        explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
+        y_pred = np.array([0.0, 1.0, 2.0])
+        y_true = np.array([1.0, 3.0, -1.0])
+        y_tilde = np.array([
+            [2.0, 2.0, 0.0],
+            [4.0, -1.0, 3.0],
+        ])
+
+        actual = explainer._ueif_from_counterfactuals(
+            y_pred, y_tilde, method="scpi", y_true=y_true
+        )
+        expected = (y_true - y_tilde.mean(axis=0)) ** 2 - (y_true - y_pred) ** 2
+
+        assert np.allclose(actual, expected)
+
+    def test_l2_finite_resample_identity(self):
+        """For L2, 2*CPI = SCPI + the counterfactual prediction variance."""
+        explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
+        y_pred = np.array([0.0, 1.0, 2.0])
+        y_true = np.array([1.0, 3.0, -1.0])
+        y_tilde = np.array([
+            [2.0, 2.0, 0.0],
+            [4.0, -1.0, 3.0],
+            [-2.0, 5.0, 1.0],
+        ])
+
+        cpi = explainer._ueif_from_counterfactuals(
+            y_pred, y_tilde, method="cpi", y_true=y_true
+        )
+        scpi = explainer._ueif_from_counterfactuals(
+            y_pred, y_tilde, method="scpi", y_true=y_true
+        )
+
+        assert np.allclose(2.0 * cpi, scpi + y_tilde.var(axis=0))
+
 
 def generate_exp3_data(n=500, rho=0.8, seed=42):
     rng = np.random.default_rng(seed)
@@ -1094,15 +1149,25 @@ class TestArbitraryLossOT:
         assert np.allclose(r_default["phi_Z"], r_l2["phi_Z"], atol=1e-12)
         assert np.allclose(r_default["phi_X"], r_l2["phi_X"], atol=1e-12)
 
-    def test_scpi_ge_cpi_label_free_l2(self):
-        # Label-free L2: SCPI = CPI + Var_b >= CPI per sample.
-        X, y, model = _linear_regression_dgp()
-        Xt = X[:60]
-        e_cpi = OTExplainer(model, X, nsamples=20, random_state=0, method="cpi")
-        e_scpi = OTExplainer(model, X, nsamples=20, random_state=0, method="scpi")
-        e_cpi(Xt)
-        e_scpi(Xt)
-        assert np.all(e_scpi.ueifs_Z >= e_cpi.ueifs_Z - 1e-9)
+    def test_cpi_scpi_l2_population_agreement(self):
+        """Normalized CPI and SCPI agree up to finite-sample Monte Carlo error."""
+        X, y, model = _linear_regression_dgp(n=1200, d=4, seed=3)
+        Xt, yt = X[:600], y[:600]
+        common = dict(
+            nsamples=100,
+            random_state=0,
+            compute_diagnostics=False,
+        )
+        e_cpi = OTExplainer(model, X, method="cpi", **common)
+        e_scpi = OTExplainer(model, X, method="scpi", **common)
+        r_cpi = e_cpi(Xt, y=yt)
+        r_scpi = e_scpi(Xt, y=yt)
+
+        # Compare active latent directions. Null directions have population
+        # importance zero, so relative tolerances are not informative there.
+        assert np.allclose(
+            r_cpi["phi_Z"][:2], r_scpi["phi_Z"][:2], rtol=0.12, atol=0.08
+        )
 
     @pytest.mark.parametrize("loss", ["l1", "huber", "pinball"])
     def test_regression_losses_rank_active(self, loss):
@@ -1239,4 +1304,3 @@ class TestArbitraryLossFlow:
         # With y -> DFI loss-difference form (finite)
         res = e(X[:40], y=y[:40])
         assert np.all(np.isfinite(res["phi_X"]))
-

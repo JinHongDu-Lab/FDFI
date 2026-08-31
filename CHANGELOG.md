@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.0]
+### Fixed
+- **CPI/SCPI resampling definitions** now match the FDFI paper. ``method='cpi'``
+  computes one half the average per-resample loss difference, while
+  ``method='scpi'`` averages counterfactual predictions before applying the
+  loss difference. Previously the method labels were reversed and the
+  loss-first score omitted CPI's one-half normalization.
+- Added exact formula tests and a Gaussian OT simulation test for the
+  squared-loss population agreement of normalized CPI and SCPI.
+
+### Changed
+- **Migration:** with identical data and random draws, old ``method='cpi'`` is
+  new ``method='scpi'``; old ``method='scpi'`` is twice new ``method='cpi'``.
+  Estimator-dependent importance values, standard errors, intervals, and plots
+  should be regenerated after upgrading.
+
 ## [0.0.10] - 2026-08-04
 ### Removed
 - **`TreeExplainer`, `LinearExplainer`, and `KernelExplainer`**: these were placeholders whose `__call__` raised `NotImplementedError`, and they are gone from `fdfi.explainers` along with their API pages, user-guide sections, and tests. The three implemented variants (`OTExplainer`, `EOTExplainer`, `FlowExplainer`) are model-agnostic — they wrap any callable `f(X) -> y` — so tree ensembles, linear models, and arbitrary black boxes are already covered without a model-specific class. **Breaking:** code that imported these names now raises `ImportError` instead of failing later at call time.
@@ -18,6 +34,12 @@
 - Read the Docs URL added to `README.md` and `pyproject.toml`; the previous `Documentation` URL pointed back at the GitHub repository.
 
 ## [0.0.9] - 2026-07-13
+
+> **Historical note:** The CPI/SCPI behavior described in this release section
+> used the former, reversed method labels. Version 0.1.0 corrects the labels
+> and CPI normalization to match the FDFI paper; use the 0.1.0 migration note
+> above when comparing saved results.
+
 ### Added
 - **Arbitrary loss functions**: importance can now be defined through any per-sample loss instead of only the squared-error (L2) residual difference. New `fdfi/losses.py` registry provides regression losses (`squared_error`/`l2`, `absolute_error`/`l1`, `huber`, `pinball`) and binary-classification losses (`log_loss`/`bce`, `brier`, `zero_one`), plus `resolve_loss()`/`available_losses()`. Custom callables `loss(y_true, y_pred)` are also accepted.
 - **`loss` argument** on `OTExplainer`, `EOTExplainer`, `FlowExplainer`, and `Crossfitting` (default squared error → unchanged behaviour). Passing true labels `y` at call time uses the loss-difference (DFI) form; when `y` is omitted a label-free form is used that references the model's own prediction — the prediction shift for regression losses and a Bregman divergence (e.g. KL for log-loss) for proper scoring rules.

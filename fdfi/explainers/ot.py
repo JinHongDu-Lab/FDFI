@@ -43,13 +43,17 @@ class OTExplainer(Explainer):
     random_state : int, default=0
         Seed for the random number generator used in resampling.
     method : {'cpi', 'scpi'}, default='cpi'
-        Averaging order for the counterfactual predictions:
+        Counterfactual resampling estimator:
 
-        * ``'cpi'`` – average the prediction over resamples first, then apply
-          the loss (``L(r, E_b[ŷ_b])``).
-        * ``'scpi'`` – apply the loss per resample first, then average
-          (``E_b[L(r, ŷ_b)]``; for squared error this equals CPI plus the
-          prediction variance).
+        * ``'cpi'`` – normalized CPI from the FDFI paper: apply the loss to
+          every resample, average the loss differences, and multiply by
+          one half (``0.5 * E_b[L(r, ŷ_b) - L(r, ŷ)]``).
+        * ``'scpi'`` – Sobol-CPI: average counterfactual predictions first,
+          then apply the loss (``L(r, E_b[ŷ_b]) - L(r, ŷ)``).
+
+        With squared-error loss, exact latent independence, and infinitely
+        many resamples, the two population scores agree. The finite-resample
+        SCPI plug-in is generally not identical to CPI.
     verbose : bool, default=False
         Print progress messages during setup and inference.
     compute_diagnostics : bool, default=True
@@ -195,10 +199,10 @@ class OTExplainer(Explainer):
 
         For each feature ``j`` the j-th latent coordinate is replaced by
         independent draws and importance is scored through ``self._loss`` using
-        the CPI/SCPI averaging order given by ``self.method``.  With the default
-        squared-error loss and no ``y_true`` this reduces to the L2 prediction
-        shift ``(ŷ - E_b[ŷ_b])²``; with ``y_true`` it becomes the DFI residual
-        difference ``L(y, ŷ_b) - L(y, ŷ)``.
+        the CPI/SCPI definition given by ``self.method``. CPI is one half the
+        average per-resample loss difference; SCPI applies the loss after
+        averaging the counterfactual predictions. With the default squared-
+        error loss and no ``y_true``, the reference is the baseline prediction.
         """
         n, d = Z.shape
         ueifs_Z = np.zeros((n, d))

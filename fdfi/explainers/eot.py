@@ -28,13 +28,9 @@ class EOTExplainer(Explainer):
 
         φ_X_j = Σ_k W[j,k]² · φ_Z_k
 
-    Feature importance is measured via the uncentered efficient influence
-    function (UEIF):
-
-        UEIF_{i,j} = (Y_i - ŷ_{-j,i})²
-
-    where ŷ_{-j} averages predictions over counterfactual resamples of
-    feature j.
+    Feature importance is measured from counterfactual resamples in latent
+    space. CPI uses one half the average per-resample loss difference; SCPI
+    applies the loss after averaging the counterfactual predictions.
 
     Parameters
     ----------
@@ -58,8 +54,9 @@ class EOTExplainer(Explainer):
     random_state : int, default=0
         Random seed for reproducibility.
     method : {'cpi', 'scpi'}, default='cpi'
-        Averaging order for counterfactual predictions (CPI averages the
-        prediction before the loss; SCPI averages the per-resample loss).
+        Resampling estimator. CPI averages per-resample loss differences and
+        multiplies by one half; SCPI averages predictions before applying the
+        loss. These match the definitions in the FDFI paper.
     **kwargs : dict
         Extra arguments forwarded to the base Explainer.
     """
@@ -167,10 +164,10 @@ class EOTExplainer(Explainer):
             prediction-shift form (default, y_true=None; squared error only):
                 UEIF_{i,j} = agg_b L(ŷ_i, ŷ_{b,i})
 
-        where ``agg_b`` averages the prediction first (CPI) or the loss first
-        (SCPI).  With the default squared-error loss the DFI form reduces to
-        ``(y_i - ȳ_{-j,i})² - (y_i - ŷ_i)²`` (Williamson & Feng, 2023), which is
-        centered near zero for null features.
+        CPI uses ``0.5 * E_b[L(y_i, ŷ_{b,i}) - L(y_i, ŷ_i)]``. SCPI uses
+        ``L(y_i, E_b[ŷ_{b,i}]) - L(y_i, ŷ_i)``. With squared-error loss,
+        exact latent independence, and infinitely many resamples, their
+        population targets agree.
 
         Parameters
         ----------

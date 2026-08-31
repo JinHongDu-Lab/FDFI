@@ -78,12 +78,13 @@ space Z where features are approximately independent.
 
 **CPI (Conditional Permutation Importance)**
 
-Averages the counterfactual prediction first, then applies the loss:
+Applies the loss to every counterfactual resample, averages the loss
+differences, and multiplies by one half:
 
 .. math::
 
-   \phi_{Z,j}^{CPI} = L\!\big(Y,\; \mathbb{E}_b[f(\tilde{X}_b^{(j)})]\big)
-   \; - \; L\!\big(Y, f(X)\big)
+   \phi_{Z,j}^{CPI} = \frac{1}{2}\,\mathbb{E}_b\!\left[
+   L\!\big(Y,f(\tilde X_b^{(j)})\big)-L\!\big(Y,f(X)\big)\right]
 
 where :math:`\tilde{X}_b^{(j)} = T^{-1}(\tilde{Z}_b^{(j)})` and 
 :math:`\tilde{Z}_b^{(j)}` has the j-th component replaced with sample b, and
@@ -91,17 +92,21 @@ where :math:`\tilde{X}_b^{(j)} = T^{-1}(\tilde{Z}_b^{(j)})` and
 
 **SCPI (Sobol-CPI)**
 
-Applies the loss to each Monte Carlo sample first, then averages:
+Averages the counterfactual predictions first, then applies the loss:
 
 .. math::
 
-   \phi_{Z,j}^{SCPI} = \mathbb{E}_b\!\big[L\!\big(Y, f(\tilde{X}_b^{(j)})\big)\big]
-   \; - \; L\!\big(Y, f(X)\big)
+   \phi_{Z,j}^{SCPI} = L\!\big(Y,\mathbb{E}_b[f(\tilde X_b^{(j)})]\big)
+   -L\!\big(Y,f(X)\big)
 
-The key difference from CPI is the **order of averaging**; the two coincide for
-a linear loss and differ by a Jensen gap otherwise. For the squared-error loss,
-:math:`\phi^{SCPI} = \phi^{CPI} + \mathrm{Var}_b[f(\tilde{X}_b)]`, recovering the
-Sobol total-order sensitivity index.
+The factor one half follows the normalized CPI convention of the FDFI paper;
+conventional CPI without it is twice as large. For the same finite Monte Carlo
+draws and squared-error loss, the exact relation is
+:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]`.
+Under an exact disentangling map and a Bayes predictor, normalized CPI and the
+infinite-resample SCPI target the same Sobol total-order quantity. At finite
+:math:`B`, the uncorrected SCPI plug-in has Monte Carlo inflation; in the ideal
+squared-loss setting its expectation is :math:`(1+1/B)` times that quantity.
 
 **Choosing a loss**
 
