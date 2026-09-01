@@ -159,18 +159,25 @@ underlying distribution structure
 **Understanding CPI vs SCPI:**
 
 - **CPI (Conditional Permutation Importance)**: Average the counterfactual
-  prediction first, then apply the loss:
+  loss differences and multiply by one half:
   
   .. math::
   
-     \phi_j^{CPI} = L\big(Y, E_b[f(\tilde{X}_b^{(j)})]\big) - L\big(Y, f(X)\big)
+     \phi_j^{CPI} = \frac12 E_b\left[L\big(Y,f(\tilde X_b^{(j)})\big)
+     -L\big(Y,f(X)\big)\right]
   
-- **SCPI (Sobol-CPI)**: Apply the loss per Monte Carlo sample first, then
-  average:
+- **SCPI (Sobol-CPI)**: Average the counterfactual predictions first, then
+  apply the loss:
   
   .. math::
   
-     \phi_j^{SCPI} = E_b\big[L\big(Y, f(\tilde{X}_b^{(j)})\big)\big] - L\big(Y, f(X)\big)
+     \phi_j^{SCPI} = L\big(Y,E_b[f(\tilde X_b^{(j)})]\big)-L\big(Y,f(X)\big)
+
+The one-half factor is the normalized CPI convention used by the FDFI paper.
+For squared loss and the same finite draws,
+:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]`;
+the two population targets agree under exact disentanglement and Bayes-optimal
+prediction as the number of resamples tends to infinity.
 
 The ``method`` argument (``'cpi'`` or ``'scpi'``) is available on ``OTExplainer``,
 ``EOTExplainer``, and ``FlowExplainer``.

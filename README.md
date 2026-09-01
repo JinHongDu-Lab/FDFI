@@ -10,7 +10,7 @@ A Python library for computing feature importance using disentangled methods, in
 
 📖 **[Read the documentation](https://fdfi.readthedocs.io/en/latest/)**
 
-Current release: `0.0.10`
+Current development version: `0.1.0`
 
 ## Overview
 
@@ -136,8 +136,16 @@ results = explainer(X_test)
 
 `FlowExplainer` uses normalizing flows for non-Gaussian data, supporting both CPI (Conditional Permutation Importance) and SCPI (Sobol-CPI):
 
-- **CPI**: Average predictions first, then squared difference: $(Y - E[f(\tilde{X})])^2$
-- **SCPI**: Squared differences first, then average: $E[(Y - f(\tilde{X}_b))^2]$
+- **CPI**: Half the average per-resample loss difference:
+  $\frac12 E_b[L(Y,f(\tilde X_b))-L(Y,f(X))]$.
+- **SCPI**: Average counterfactual predictions before applying the loss:
+  $L(Y,E_b[f(\tilde X_b)])-L(Y,f(X))$.
+
+This is the normalization and naming used in the FDFI paper. Conventional CPI
+without the factor $1/2$ is twice the package's CPI. Under squared-error loss,
+an exact disentangling map, and a Bayes predictor, CPI and the infinite-resample
+SCPI have the same population target. With the same finite resamples,
+$2\,\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\operatorname{Var}_b[f(\tilde X_b)]$.
 
 ```python
 from fdfi.explainers import FlowExplainer

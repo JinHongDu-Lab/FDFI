@@ -1,12 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import numpy as np
 from torchdiffeq import odeint
-from torch.func import jacrev, vmap
+from torch.func import jacrev
 
 
 
@@ -87,20 +86,6 @@ class FlowMatchingModel:
             use_bn=use_bn
         ).to(self.device)
 
-    def clone(self):
-        dummy_X = np.zeros((1, self.dim), dtype=np.float32)
-        new = FlowMatchingModel(
-            X=dummy_X,
-            dim=self.dim,
-            sigma_min=self.sigma_min,
-            device=self.device,
-            hidden_dim=self.hidden_dim,
-            time_embed_dim=self.time_embed_dim,
-            num_blocks=self.num_blocks,
-            use_bn=self.use_bn
-        )
-        return new
-
     def set_data(self, X_np):
         if isinstance(X_np, torch.Tensor):
             self.X = X_np.to(self.device).float()
@@ -124,12 +109,6 @@ class FlowMatchingModel:
         v_target = x1 - (1 - self.sigma_min) * x0
         v_pred = self.model(xt, t)
         return F.mse_loss(v_pred, v_target)
-
-    def flow_matching_loss(self, x0, x1, t):
-        xt = (1 - t) * x0 + t * x1
-        v_target = x1 - x0
-        v_pred = self.model(xt, t)
-        return ((v_pred - v_target) ** 2).mean()
 
     def fit(self, X=None, num_steps=20000, batch_size=512, lr=5e-4, show_plot=False, verbose=True, dequantize_noise=0.0):
         """

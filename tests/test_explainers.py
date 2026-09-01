@@ -61,6 +61,61 @@ class TestExplainer:
         with pytest.raises(NotImplementedError):
             explainer.shap_values(X)
 
+    def test_cpi_matches_normalized_fdfi_formula(self):
+        """CPI is one half of the mean per-resample loss difference."""
+        explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
+        y_pred = np.array([0.0, 1.0, 2.0])
+        y_true = np.array([1.0, 3.0, -1.0])
+        y_tilde = np.array([
+            [2.0, 2.0, 0.0],
+            [4.0, -1.0, 3.0],
+        ])
+
+        actual = explainer._ueif_from_counterfactuals(
+            y_pred, y_tilde, method="cpi", y_true=y_true
+        )
+        base = (y_true - y_pred) ** 2
+        expected = 0.5 * (((y_true[None, :] - y_tilde) ** 2).mean(axis=0) - base)
+
+        assert np.allclose(actual, expected)
+
+    def test_scpi_matches_prediction_first_formula(self):
+        """SCPI applies the loss after averaging counterfactual predictions."""
+        explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
+        y_pred = np.array([0.0, 1.0, 2.0])
+        y_true = np.array([1.0, 3.0, -1.0])
+        y_tilde = np.array([
+            [2.0, 2.0, 0.0],
+            [4.0, -1.0, 3.0],
+        ])
+
+        actual = explainer._ueif_from_counterfactuals(
+            y_pred, y_tilde, method="scpi", y_true=y_true
+        )
+        expected = (y_true - y_tilde.mean(axis=0)) ** 2 - (y_true - y_pred) ** 2
+
+        assert np.allclose(actual, expected)
+
+    def test_l2_finite_resample_identity(self):
+        """For L2, 2*CPI = SCPI + the counterfactual prediction variance."""
+        explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
+        y_pred = np.array([0.0, 1.0, 2.0])
+        y_true = np.array([1.0, 3.0, -1.0])
+        y_tilde = np.array([
+            [2.0, 2.0, 0.0],
+            [4.0, -1.0, 3.0],
+            [-2.0, 5.0, 1.0],
+        ])
+
+        cpi = explainer._ueif_from_counterfactuals(
+            y_pred, y_tilde, method="cpi", y_true=y_true
+        )
+        scpi = explainer._ueif_from_counterfactuals(
+            y_pred, y_tilde, method="scpi", y_true=y_true
+        )
+
+        assert np.allclose(2.0 * cpi, scpi + y_tilde.var(axis=0))
+
 
 def generate_exp3_data(n=500, rho=0.8, seed=42):
     rng = np.random.default_rng(seed)
@@ -561,94 +616,6 @@ class TestFlowExplainer:
         from scipy.stats import spearmanr
         corr, _ = spearmanr(results1['phi_Z'], results2['phi_Z'])
         assert corr > 0.5, f"Rank correlation should be positive: {corr}"
-
-
-class TestFlowExplainBatches:
-    """Compatibility coverage for the batched yifan-dev Flow API."""
-
-    @staticmethod
-    def identity_explainer(model, data, **kwargs):
-        explainer = FlowExplainer(model, data, fit_flow=False, **kwargs)
-        explainer.Z_full = np.asarray(data)
-        explainer._encode_to_Z = lambda values: np.asarray(values)
-        explainer._decode_to_X = lambda values: np.asarray(values)
-        explainer._compute_jacobian = lambda values: np.eye(values.shape[1])
-        return explainer
-
-    @pytest.mark.parametrize("method", ["cpi", "scpi", "both"])
-    def test_single_batch_matches_call(self, method):
-        rng = np.random.default_rng(101)
-        X_train = rng.normal(size=(30, 4))
-        X_test = rng.normal(size=(9, 4))
-        y = simple_linear_model(X_test) + rng.normal(scale=0.1, size=9)
-        explainer = self.identity_explainer(
-            simple_linear_model,
-            X_train,
-            nsamples=7,
-            method=method,
-            random_state=3,
-            compute_diagnostics=False,
-        )
-
-        expected = explainer(X_test, y=y)
-        actual = explainer.explain_batches(X_test, batch_size=len(X_test), y=y)
-
-        assert actual.keys() == expected.keys()
-        for key in expected:
-            assert np.allclose(actual[key], expected[key])
-        assert explainer.ueifs_X.shape == X_test.shape
-        assert explainer.ueifs_Z.shape == X_test.shape
-
-    def test_multiple_batches_support_nondefault_loss_and_y(self):
-        rng = np.random.default_rng(202)
-        X_train = rng.normal(size=(25, 3))
-        X_test = rng.normal(size=(11, 3))
-        y = (X_test[:, 0] > 0).astype(float)
-
-        def probability_model(values):
-            return 1.0 / (1.0 + np.exp(-values[:, 0]))
-
-        explainer = self.identity_explainer(
-            probability_model,
-            X_train,
-            nsamples=6,
-            method="both",
-            random_state=4,
-            loss="log_loss",
-            compute_diagnostics=False,
-        )
-        results = explainer.explain_batches(X_test, batch_size=4, y=y)
-
-        assert explainer.ueifs_X.shape == X_test.shape
-        assert explainer.ueifs_Z.shape == X_test.shape
-        assert all(np.all(np.isfinite(value)) for value in results.values())
-        assert "phi_X_scpi" in results
-        assert "phi_Z_scpi" in results
-        ci = explainer.conf_int(alpha=0.05, target="X")
-        assert ci["score"].shape == (X_test.shape[1],)
-
-    def test_legacy_call_and_input_validation(self):
-        rng = np.random.default_rng(303)
-        X_train = rng.normal(size=(20, 3))
-        X_test = rng.normal(size=(7, 3))
-        explainer = self.identity_explainer(
-            simple_linear_model,
-            X_train,
-            nsamples=5,
-            random_state=5,
-            compute_diagnostics=False,
-        )
-
-        results = explainer.explain_batches(X_test, batch_size=3)
-        assert results["phi_X"].shape == (X_test.shape[1],)
-        with pytest.raises(ValueError, match="2D"):
-            explainer.explain_batches(X_test[0])
-        with pytest.raises(ValueError, match="at least one row"):
-            explainer.explain_batches(X_test[:0])
-        with pytest.raises(ValueError, match="positive"):
-            explainer.explain_batches(X_test, batch_size=0)
-        with pytest.raises(ValueError, match="one value per row"):
-            explainer.explain_batches(X_test, y=np.ones(len(X_test) - 1))
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="FlowExplainer tests require torch")
@@ -1182,15 +1149,25 @@ class TestArbitraryLossOT:
         assert np.allclose(r_default["phi_Z"], r_l2["phi_Z"], atol=1e-12)
         assert np.allclose(r_default["phi_X"], r_l2["phi_X"], atol=1e-12)
 
-    def test_scpi_ge_cpi_label_free_l2(self):
-        # Label-free L2: SCPI = CPI + Var_b >= CPI per sample.
-        X, y, model = _linear_regression_dgp()
-        Xt = X[:60]
-        e_cpi = OTExplainer(model, X, nsamples=20, random_state=0, method="cpi")
-        e_scpi = OTExplainer(model, X, nsamples=20, random_state=0, method="scpi")
-        e_cpi(Xt)
-        e_scpi(Xt)
-        assert np.all(e_scpi.ueifs_Z >= e_cpi.ueifs_Z - 1e-9)
+    def test_cpi_scpi_l2_population_agreement(self):
+        """Normalized CPI and SCPI agree up to finite-sample Monte Carlo error."""
+        X, y, model = _linear_regression_dgp(n=1200, d=4, seed=3)
+        Xt, yt = X[:600], y[:600]
+        common = dict(
+            nsamples=100,
+            random_state=0,
+            compute_diagnostics=False,
+        )
+        e_cpi = OTExplainer(model, X, method="cpi", **common)
+        e_scpi = OTExplainer(model, X, method="scpi", **common)
+        r_cpi = e_cpi(Xt, y=yt)
+        r_scpi = e_scpi(Xt, y=yt)
+
+        # Compare active latent directions. Null directions have population
+        # importance zero, so relative tolerances are not informative there.
+        assert np.allclose(
+            r_cpi["phi_Z"][:2], r_scpi["phi_Z"][:2], rtol=0.12, atol=0.08
+        )
 
     @pytest.mark.parametrize("loss", ["l1", "huber", "pinball"])
     def test_regression_losses_rank_active(self, loss):

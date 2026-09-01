@@ -45,13 +45,7 @@ def _resolve_version() -> str:
 __version__ = _resolve_version()
 __author__ = "FDFI Team"
 
-# Preserve the convenience imports published on yifan-dev while exposing the
-# 0.0.10 loss API.
-from . import explainers
-from . import plots
-from . import utils
-from . import models
-from .explainers import FlowExplainer, Crossfitting
+from .explainers import Crossfitting
 from .losses import (
     resolve_loss,
     available_losses,
@@ -66,12 +60,6 @@ from .losses import (
 
 __all__ = [
     "__version__",
-    "__author__",
-    "explainers",
-    "plots",
-    "utils",
-    "models",
-    "FlowExplainer",
     "Crossfitting",
     "resolve_loss",
     "available_losses",
