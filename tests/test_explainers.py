@@ -619,6 +619,90 @@ class TestFlowExplainer:
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="FlowExplainer tests require torch")
+class TestFlowExplainBatches:
+    """Compatibility coverage for the batched Flow API."""
+
+    @staticmethod
+    def identity_explainer(model, data, **kwargs):
+        explainer = FlowExplainer(model, data, fit_flow=False, **kwargs)
+        explainer.Z_full = np.asarray(data)
+        explainer._encode_to_Z = lambda values: np.asarray(values)
+        explainer._decode_to_X = lambda values: np.asarray(values)
+        explainer._compute_jacobian = lambda values: np.eye(values.shape[1])
+        return explainer
+
+    @pytest.mark.parametrize("method", ["cpi", "scpi", "both"])
+    def test_single_batch_matches_call(self, method):
+        rng = np.random.default_rng(101)
+        X_train = rng.normal(size=(30, 4))
+        X_test = rng.normal(size=(9, 4))
+        y = simple_linear_model(X_test) + rng.normal(scale=0.1, size=9)
+        explainer = self.identity_explainer(
+            simple_linear_model,
+            X_train,
+            nsamples=7,
+            method=method,
+            random_state=3,
+            compute_diagnostics=False,
+        )
+
+        expected = explainer(X_test, y=y)
+        actual = explainer.explain_batches(X_test, batch_size=len(X_test), y=y)
+
+        assert actual.keys() == expected.keys()
+        for key in expected:
+            assert np.allclose(actual[key], expected[key])
+        assert explainer.ueifs_X.shape == X_test.shape
+        assert explainer.ueifs_Z.shape == X_test.shape
+
+    def test_multiple_batches_support_nondefault_loss_and_y(self):
+        rng = np.random.default_rng(202)
+        X_train = rng.normal(size=(25, 3))
+        X_test = rng.normal(size=(11, 3))
+        y = (X_test[:, 0] > 0).astype(float)
+
+        def probability_model(values):
+            return 1.0 / (1.0 + np.exp(-values[:, 0]))
+
+        explainer = self.identity_explainer(
+            probability_model,
+            X_train,
+            nsamples=6,
+            method="both",
+            random_state=4,
+            loss="log_loss",
+            compute_diagnostics=False,
+        )
+        results = explainer.explain_batches(X_test, batch_size=4, y=y)
+
+        assert explainer.ueifs_X.shape == X_test.shape
+        assert explainer.ueifs_Z.shape == X_test.shape
+        assert all(np.all(np.isfinite(value)) for value in results.values())
+        assert "phi_X_scpi" in results
+        assert "phi_Z_scpi" in results
+
+    def test_input_validation(self):
+        rng = np.random.default_rng(303)
+        X_train = rng.normal(size=(20, 3))
+        X_test = rng.normal(size=(7, 3))
+        explainer = self.identity_explainer(
+            simple_linear_model,
+            X_train,
+            nsamples=5,
+            random_state=5,
+            compute_diagnostics=False,
+        )
+
+        with pytest.raises(ValueError, match="2D"):
+            explainer.explain_batches(X_test[0])
+        with pytest.raises(ValueError, match="at least one row"):
+            explainer.explain_batches(X_test[:0])
+        with pytest.raises(ValueError, match="positive"):
+            explainer.explain_batches(X_test, batch_size=0)
+        with pytest.raises(ValueError, match="one value per row"):
+            explainer.explain_batches(X_test, y=np.ones(len(X_test) - 1))
+
+
 class TestFlowVsOTExplainer:
     """Integration tests comparing FlowExplainer and OTExplainer."""
     
