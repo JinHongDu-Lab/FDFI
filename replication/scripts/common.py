@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal, Sequence, TextIO
 
-Mode = Literal["full", "review", "one_seed", "quick"]
+Mode = Literal["full", "fifty_seed", "review", "one_seed", "quick"]
 Status = Literal["SUCCESS", "FAILED", "BLOCKED", "SKIPPED"]
 WorkflowSelection = Literal["all", "sens50", "ctg", "simulation"]
 
@@ -490,7 +490,7 @@ def _run_provenance(workflow: WorkflowSelection, config: RunConfig) -> dict[str,
     notebook_paths = [EOT_NOTEBOOK, CTG_NOTEBOOK]
     execution_paths = [
         REPLICATION_DIR / "reproduce.py", REPLICATION_DIR / "reproduce_review.py",
-        REPLICATION_DIR / "reproduce_one_seed.py",
+        REPLICATION_DIR / "reproduce_one_seed.py", REPLICATION_DIR / "reproduce_fifty_seed.py",
         REPLICATION_DIR / "reproduce_quick.py",
         REPLICATION_DIR / "scripts/common.py", REPLICATION_DIR / "scripts/reproduce_sens50_eot.py",
         REPLICATION_DIR / "scripts/reproduce_ctg.py", REPLICATION_DIR / "scripts/reproduce_simulation.py",
@@ -642,7 +642,7 @@ def run_replication(mode: Mode, check_only: bool = False, workflow: WorkflowSele
     # validation, but their numerical results still require the notebook-aligned
     # environment and validated inputs.
     report = _invoke_preflight(preflight_fn, mode, workflow, False, runs_dir)
-    if mode in {"full", "review", "one_seed"} and not report.ready:
+    if mode in {"full", "fifty_seed", "review", "one_seed"} and not report.ready:
         _invoke_preflight(preflight_fn, mode, workflow, True, runs_dir)
         print(f"Strict {mode} preflight failed; no workflows started and no outputs modified.")
         return 2
@@ -717,7 +717,7 @@ def run_replication(mode: Mode, check_only: bool = False, workflow: WorkflowSele
                 print(f"Published formal artifacts: {published}")
             elif mode == "full":
                 print("Formal outputs were not published.")
-            elif mode in {"review", "one_seed"}:
+            elif mode in {"fifty_seed", "review", "one_seed"}:
                 print("Review-stage outputs remain isolated and were not formally published.")
             log_handle.flush()
             manifest_path = config.metadata_dir / "run_manifest.json"

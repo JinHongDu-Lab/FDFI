@@ -85,6 +85,13 @@ rows for that selected seed from a prior review checkpoint; the source hash and
 import counts are recorded in metadata. One-seed outputs are preliminary and
 do not replace the manuscript protocol.
 
+`python reproduce_fifty_seed.py --runs-dir <path>` runs the professor-approved
+50-seed benchmark validation with one shared runtime seed. The optional
+`--source-feature-checkpoint <csv>` imports only complete, compatible scenarios
+whose seeds belong to the 50-seed schedule, so a validated 10-seed checkpoint
+can be reused without recomputation. Outputs remain isolated and are not
+automatically published as formal manuscript artifacts.
+
 ## Scope and source of truth
 
 Following the project meeting, this replication package is aligned primarily

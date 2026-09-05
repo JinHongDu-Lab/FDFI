@@ -16,6 +16,7 @@ def preflight(mode: Mode = "full") -> dict[str, object]:
     runtime = runtime_settings(mode)
     stage = {
         "quick": "quick is a smoke test",
+        "fifty_seed": "fifty_seed uses the full grids with 50 benchmark repetitions and 1 runtime seed",
         "review": "review uses the full grids with 10 benchmark repetitions and 1 runtime seed",
         "one_seed": "one_seed uses the full grids with 1 shared benchmark and runtime seed",
         "full": "full reproduces the manuscript protocol",
@@ -57,6 +58,11 @@ def run(mode: Mode, config: RunConfig) -> WorkflowResult:
     if mode == "quick":
         warnings.append(
             "Quick mode is a computational smoke test and must not be cited as a formal result."
+        )
+    elif mode == "fifty_seed":
+        warnings.append(
+            "Professor-approved 50-seed validation: benchmarking uses 50 repetitions "
+            "and runtime uses one seed; outputs remain isolated until manuscript approval."
         )
     elif mode == "review":
         warnings.append(

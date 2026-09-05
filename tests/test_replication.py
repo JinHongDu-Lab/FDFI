@@ -85,12 +85,15 @@ def test_simulation_preflight_uses_confirmed_reference_specification():
     from replication.scripts import reproduce_simulation
     quick = reproduce_simulation.preflight("quick")
     review = reproduce_simulation.preflight("review")
+    fifty_seed = reproduce_simulation.preflight("fifty_seed")
     one_seed = reproduce_simulation.preflight("one_seed")
     full = reproduce_simulation.preflight("full")
     assert quick["ready"] is True
     assert "smoke test" in str(quick["detail"])
     assert review["ready"] is True
     assert "10 benchmark repetitions and 1 runtime seed" in str(review["detail"])
+    assert fifty_seed["ready"] is True
+    assert "50 benchmark repetitions and 1 runtime seed" in str(fifty_seed["detail"])
     assert one_seed["ready"] is True
     assert "1 shared benchmark and runtime seed" in str(one_seed["detail"])
     assert full["ready"] is True
@@ -130,9 +133,13 @@ def test_simulation_benchmark_contract_uses_both_fdfi_resampling_versions():
     assert len(set(quick["seed_schedule"])) == quick["repetitions"]
     full = settings("full")
     review = settings("review")
+    fifty_seed = settings("fifty_seed")
     one_seed = settings("one_seed")
     assert full["repetitions"] == 100
     assert review["repetitions"] == 10
+    assert fifty_seed["repetitions"] == 50
+    assert fifty_seed["seed_schedule"] == full["seed_schedule"][:50]
+    assert fifty_seed["execution_stage"] == "professor_fifty_seed_validation"
     assert one_seed["repetitions"] == 1
     assert one_seed["seed_schedule"] == full["seed_schedule"][:1]
     assert one_seed["execution_stage"] == "professor_one_seed_consistency_check"
@@ -165,6 +172,7 @@ def test_runtime_contract_matches_exp2_evaluate_only_and_is_deterministic():
     assert "shared black-box fitting" in full["timing_scope"]["excluded"]
     assert "Flow training" in full["timing_scope"]["excluded"]
     review = runtime_settings("review")
+    fifty_seed = runtime_settings("fifty_seed")
     one_seed = runtime_settings("one_seed")
     assert tuple(review["n_values"]) == FULL_RUNTIME_N_VALUES
     assert review["repetitions"] == 1
@@ -174,6 +182,9 @@ def test_runtime_contract_matches_exp2_evaluate_only_and_is_deterministic():
     assert review["shapley_mc_draws"] == 100
     assert review["flow_steps"] == 5000
     assert review["execution_stage"] == "professor_review_stage_1"
+    assert fifty_seed["repetitions"] == 1
+    assert fifty_seed["seed_schedule"] == full["seed_schedule"][:1]
+    assert fifty_seed["execution_stage"] == "professor_fifty_seed_validation"
     assert one_seed["repetitions"] == 1
     assert one_seed["seed_schedule"] == full["seed_schedule"][:1]
     assert one_seed["execution_stage"] == "professor_one_seed_consistency_check"
