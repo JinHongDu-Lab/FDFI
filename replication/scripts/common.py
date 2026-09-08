@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal, Sequence, TextIO
 
-Mode = Literal["full", "fifty_seed", "review", "one_seed", "quick"]
+Mode = Literal["full", "fifty_seed", "review", "one_seed", "quick", "d3"]
 Status = Literal["SUCCESS", "FAILED", "BLOCKED", "SKIPPED"]
 WorkflowSelection = Literal["all", "sens50", "ctg", "simulation"]
 

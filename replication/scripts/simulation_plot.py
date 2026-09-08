@@ -124,16 +124,9 @@ def _runtime_figure(runtime_summary: pd.DataFrame, path: Path) -> None:
     plt.close(fig)
 
 
-def create_figures(summary_path: Path, runtime_summary_path: Path, figures_dir: Path) -> list[Path]:
-    summary = pd.read_csv(summary_path)
+def create_runtime_figure(runtime_summary_path: Path, figures_dir: Path) -> Path:
+    """Render the standalone D3-style computational-cost figure from its CSV."""
     runtime_summary = pd.read_csv(runtime_summary_path)
-    required = {
-        "sweep", "n", "rho", "method", "resampling_version",
-        "auc", "power_c1", "type1_error",
-    }
-    missing = required.difference(summary.columns)
-    if missing:
-        raise ValueError(f"simulation benchmark summary is missing columns: {sorted(missing)}")
     runtime_required = {
         "n", "method", "mean_runtime_seconds", "std_runtime_seconds",
     }
@@ -142,10 +135,24 @@ def create_figures(summary_path: Path, runtime_summary_path: Path, figures_dir: 
         raise ValueError(
             f"simulation runtime summary is missing columns: {sorted(runtime_missing)}"
         )
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    runtime_path = figures_dir / "simulation_runtime.pdf"
+    _runtime_figure(runtime_summary, runtime_path)
+    return runtime_path
+
+
+def create_figures(summary_path: Path, runtime_summary_path: Path, figures_dir: Path) -> list[Path]:
+    summary = pd.read_csv(summary_path)
+    required = {
+        "sweep", "n", "rho", "method", "resampling_version",
+        "auc", "power_c1", "type1_error",
+    }
+    missing = required.difference(summary.columns)
+    if missing:
+        raise ValueError(f"simulation benchmark summary is missing columns: {sorted(missing)}")
     cpi_path = figures_dir / "simulation_benchmark_cpi.pdf"
     scpi_path = figures_dir / "simulation_benchmark_scpi.pdf"
-    runtime_path = figures_dir / "simulation_runtime.pdf"
     _benchmark_figure(summary, "cpi", cpi_path)
     _benchmark_figure(summary, "scpi", scpi_path)
-    _runtime_figure(runtime_summary, runtime_path)
+    runtime_path = create_runtime_figure(runtime_summary_path, figures_dir)
     return [cpi_path, scpi_path, runtime_path]

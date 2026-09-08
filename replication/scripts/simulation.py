@@ -63,6 +63,10 @@ QUICK_RUNTIME_N_VALUES = (40, 60)
 FULL_RUNTIME_REPETITIONS = 10
 REVIEW_RUNTIME_REPETITIONS = 1
 QUICK_RUNTIME_REPETITIONS = 1
+# Matches the Appendix D.4 / Figure D3 sample-size grid exactly; repetitions
+# raised from the paper's 10 to 20 for a tighter estimate of mean runtime.
+D3_RUNTIME_N_VALUES = (200, 400, 600, 800, 1000)
+D3_RUNTIME_REPETITIONS = 20
 RUNTIME_DIMENSION = 50
 SHAP_DIMENSION = 10
 RUNTIME_RHO1 = 0.8
@@ -176,6 +180,7 @@ def runtime_settings(mode: str) -> dict[str, object]:
     fifty_seed = mode == "fifty_seed"
     review = mode == "review"
     one_seed = mode == "one_seed"
+    d3 = mode == "d3"
     repetitions = (
         QUICK_RUNTIME_REPETITIONS
         if quick
@@ -183,6 +188,8 @@ def runtime_settings(mode: str) -> dict[str, object]:
         if one_seed
         else REVIEW_RUNTIME_REPETITIONS
         if fifty_seed or review
+        else D3_RUNTIME_REPETITIONS
+        if d3
         else FULL_RUNTIME_REPETITIONS
     )
     return {
@@ -195,10 +202,16 @@ def runtime_settings(mode: str) -> dict[str, object]:
             if fifty_seed
             else "professor_one_seed_consistency_check"
             if one_seed
-            else "professor_review_stage_1" if review else "formal_manuscript"
+            else "professor_review_stage_1"
+            if review
+            else "paper_figure_d3_reproduction" if d3 else "formal_manuscript"
         ),
         "master_seed": MASTER_SEED,
-        "n_values": QUICK_RUNTIME_N_VALUES if quick else FULL_RUNTIME_N_VALUES,
+        "n_values": (
+            QUICK_RUNTIME_N_VALUES
+            if quick
+            else D3_RUNTIME_N_VALUES if d3 else FULL_RUNTIME_N_VALUES
+        ),
         "repetitions": repetitions,
         "seed_schedule": [
             MASTER_SEED + 900_000 + repetition * 100
@@ -1065,8 +1078,12 @@ def run_runtime_experiment(
     else:
         runtime_results = pd.DataFrame(columns=columns)
 
-    for n in cfg["n_values"]:
-        for repetition in range(int(cfg["repetitions"])):
+    # Repetition outer, sample size inner: each completed seed yields a full
+    # sweep across the sample-size grid, so results can be reported and
+    # refined incrementally after every seed rather than only after all
+    # repetitions of the smallest sample size finish.
+    for repetition in range(int(cfg["repetitions"])):
+        for n in cfg["n_values"]:
             seed = int(cfg["seed_schedule"][repetition])
             completed = runtime_results.loc[
                 (runtime_results["n"] == int(n))
