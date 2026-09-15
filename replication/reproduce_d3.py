@@ -7,9 +7,9 @@ simulation study: it runs only the Experiment 2 runtime benchmark
 much more expensive Section 4.1 AUC/power benchmark that the other
 ``reproduce_*`` entry points bundle alongside it.
 
-Sample-size grid (200, 400, 600, 800, 1000) matches Figure D3 exactly; the
-repetition count is raised from the paper's 10 to 20 for a tighter estimate
-of mean runtime per method.
+The sample-size grid (200, 400, 600, 800, 1000) matches Figure D3 exactly.
+The current manuscript figure reports the 16 successful server repetitions
+provided by the authors.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Reproduce the Figure D3 computational-cost comparison "
             "(Appendix D.4): CPI, LOCO, nLOCO, dLOCO, OT, EOT, FDFI, SHAP "
-            "across n in (200, 400, 600, 800, 1000), 20 repetitions each."
+            "across n in (200, 400, 600, 800, 1000), 16 repetitions each."
         )
     )
     parser.add_argument(

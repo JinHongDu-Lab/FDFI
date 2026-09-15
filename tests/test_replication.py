@@ -155,6 +155,7 @@ def test_simulation_benchmark_contract_uses_both_fdfi_resampling_versions():
 
 def test_runtime_contract_matches_exp2_evaluate_only_and_is_deterministic():
     from replication.scripts.simulation import (
+        D3_RUNTIME_N_VALUES,
         FULL_RUNTIME_N_VALUES,
         RUNTIME_METHODS,
         generate_runtime_data,
@@ -188,6 +189,11 @@ def test_runtime_contract_matches_exp2_evaluate_only_and_is_deterministic():
     assert one_seed["repetitions"] == 1
     assert one_seed["seed_schedule"] == full["seed_schedule"][:1]
     assert one_seed["execution_stage"] == "professor_one_seed_consistency_check"
+    d3 = runtime_settings("d3")
+    assert tuple(d3["n_values"]) == D3_RUNTIME_N_VALUES
+    assert d3["repetitions"] == 16
+    assert len(d3["seed_schedule"]) == 16
+    assert d3["execution_stage"] == "paper_figure_d3_reproduction"
     quick = runtime_settings("quick")
     assert tuple(quick["n_values"]) == (40, 60)
     assert quick["repetitions"] == 1

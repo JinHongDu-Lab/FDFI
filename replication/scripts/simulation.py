@@ -63,10 +63,10 @@ QUICK_RUNTIME_N_VALUES = (40, 60)
 FULL_RUNTIME_REPETITIONS = 10
 REVIEW_RUNTIME_REPETITIONS = 1
 QUICK_RUNTIME_REPETITIONS = 1
-# Matches the Appendix D.4 / Figure D3 sample-size grid exactly; repetitions
-# raised from the paper's 10 to 20 for a tighter estimate of mean runtime.
+# Matches the Appendix D.4 / Figure D3 sample-size grid and the 16 successful
+# server repetitions used by the current manuscript figure.
 D3_RUNTIME_N_VALUES = (200, 400, 600, 800, 1000)
-D3_RUNTIME_REPETITIONS = 20
+D3_RUNTIME_REPETITIONS = 16
 RUNTIME_DIMENSION = 50
 SHAP_DIMENSION = 10
 RUNTIME_RHO1 = 0.8

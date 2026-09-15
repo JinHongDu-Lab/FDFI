@@ -57,6 +57,27 @@ runtime uses the full sample-size grid, ten seeds, d=50 except SHAP d=10, 500
 trees, 50 resamples, and the Experiment 6 Flow preparation of 5000 steps on a
 training sample matching the runtime sample size.
 
+The runtime figure currently used in the JSS manuscript is the Figure D3
+server reproduction. It uses the displayed sample-size grid
+(`n=200, 400, 600, 800, 1000`) and 16 successful repetitions. Run it without
+the much more expensive AUC/power benchmark using:
+
+```bash
+python replication/reproduce_d3.py --runs-dir <path>
+```
+
+The command writes resumable run-local files named
+`simulation_runtime_results.csv`, `simulation_runtime_summary.csv`, and
+`simulation_runtime.pdf`. The reviewed server outputs committed for manuscript
+use are the corresponding `d3_simulation_runtime_*` CSV files and
+`figures/d3_simulation_runtime.pdf`.
+
+The committed raw D3 checkpoint preserves seven successful cells from an
+interrupted 17th repetition at `n=200` (all methods except SHAP). They are kept
+for provenance and possible resumption, but are excluded from the reviewed
+summary and figure. The committed summary is exactly the mean and standard
+deviation of the 16 complete repetitions (640 cells).
+
 The baseline CPI reproduces the published residual conditional permutation
 using `StandardScaler` and `LassoLarsIC(criterion="bic")`. For OT, EOT, and
 Flow, `method="cpi"` and `method="scpi"` refer only to the two documented
