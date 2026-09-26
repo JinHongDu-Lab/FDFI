@@ -68,7 +68,7 @@ class EOTExplainer(Explainer):
         epsilon: float = 0.1,
         auto_epsilon: bool = False,
         sampling_method: str = "resample",
-        random_state: int = 0,
+        random_state: Optional[int] = 0,
         method: str = "cpi",
         **kwargs: Any
     ):
@@ -77,7 +77,7 @@ class EOTExplainer(Explainer):
         self.epsilon = epsilon
         self.auto_epsilon = auto_epsilon
         self.sampling_method = sampling_method
-        self.random_state = random_state
+        self.random_state = random_state if random_state is not None else 0
         self.method = method
         self.regularize = kwargs.get("regularize", 1e-6)
 
