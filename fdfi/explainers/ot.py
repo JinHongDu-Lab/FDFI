@@ -116,7 +116,7 @@ class OTExplainer(Explainer):
         data: np.ndarray,
         nsamples: int = 50,
         sampling_method: str = "resample",
-        random_state: int = 0,
+        random_state: Optional[int] = 0,
         method: str = "cpi",
         **kwargs: Any
     ):
@@ -125,7 +125,7 @@ class OTExplainer(Explainer):
         self.nsamples = nsamples
         self.regularize = kwargs.get("regularize", 1e-6)
         self.sampling_method = sampling_method
-        self.random_state = random_state
+        self.random_state = random_state if random_state is not None else 0
         self.method = method
 
        
