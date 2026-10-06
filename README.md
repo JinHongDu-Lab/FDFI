@@ -19,7 +19,7 @@ FDFI (Flow-Disentangled Feature Importance) is a Python module that provides int
 ## Features
 
 - 🎯 **Three explainer variants**, all model-agnostic and sharing one API:
-  `OTExplainer` (Gaussian OT — fast default), `EOTExplainer` (entropic OT — non-Gaussian and mixed-type data), and `FlowExplainer` (normalizing flows — complex non-linear dependence)
+  `OTExplainer` (Gaussian OT), `EOTExplainer` (a Gaussian approximation to entropic OT), and `FlowExplainer` (flow matching)
 - 🔁 **Cross-fitted inference**: `Crossfitting` wraps any variant for valid standard errors at small sample sizes
 - 📊 **Rich Visualizations**: Summary, waterfall, force, and dependence plots
 - 🔧 **Easy to Use**: Simple API similar to SHAP
@@ -27,6 +27,13 @@ FDFI (Flow-Disentangled Feature Importance) is a Python module that provides int
 - 🚀 **Extensible**: Built with modularity in mind for future enhancements
 
 ## Installation
+
+### From PyPI
+
+```bash
+pip install fdfi
+pip install "fdfi[flow]"
+```
 
 ### From Source
 
@@ -76,7 +83,7 @@ explainer.summary(multitest_method="fdr_bh")
 ### Visualization
 
 FDFI includes static Matplotlib plotting helpers for global scores,
-per-sample UEIFs, confidence intervals, diagnostics, and feature correlation.
+per-observation contributions, confidence intervals, diagnostics, and feature correlation.
 
 ```python
 from fdfi.plots import (
@@ -95,7 +102,7 @@ correlation_heatmap(X_background, feature_names, show=False)
 # Global scores and standard errors from explainer output
 summary_bar(results["phi_X"], results["se_X"], feature_names, show=False)
 
-# Per-sample UEIF distribution after running the explainer
+# Distribution of per-observation contributions
 summary_plot(explainer.ueifs_X, features=X_test, feature_names=feature_names, show=False)
 
 # Inference and quality checks
@@ -108,15 +115,16 @@ diagnostics_plot(explainer.diagnostics, feature_names=feature_names, show=False)
 By default, `conf_int()` uses:
 
 - `var_floor_method="mixture"`
-- `margin_method="mixture"`
+- `margin_method="auto"`: the gap rule is used for fewer than 30 units; otherwise, the mixture rule is used.
+- `threshold_null=True`: used for group-level inference.
 
 This improves stability for weak effects and avoids ad hoc thresholding in many use cases.
 You can still override both methods explicitly if needed.
 
 ## EOT Options (Entropic OT)
 
-`EOTExplainer` supports adaptive epsilon, stochastic transport sampling, and
-Gaussian/empirical targets:
+`EOTExplainer` supports a fixed or adaptive epsilon, three sampling methods,
+CPI or SCPI scores, and user-chosen losses:
 
 ```python
 from fdfi.explainers import EOTExplainer
@@ -124,17 +132,17 @@ from fdfi.explainers import EOTExplainer
 explainer = EOTExplainer(
     model.predict,
     X_background,
-    auto_epsilon=True,
-    stochastic_transport=True,
-    n_transport_samples=10,
-    target="gaussian",  # or "empirical"
+    epsilon=0.1,                 # or auto_epsilon=True to choose epsilon from the data
+    sampling_method="resample",  # 'resample', 'permutation', or 'normal'
+    method="cpi",                # 'cpi' or 'scpi'
+    loss="squared_error",
 )
 results = explainer(X_test)
 ```
 
 ## Flow-DFI with FlowExplainer
 
-`FlowExplainer` uses normalizing flows for non-Gaussian data, supporting both CPI (Conditional Permutation Importance) and SCPI (Sobol-CPI):
+`FlowExplainer` learns a nonlinear map by flow matching, supporting both CPI (Conditional Permutation Importance) and SCPI (Sobol-CPI):
 
 - **CPI**: Half the average per-resample loss difference:
   $\frac12 E_b[L(Y,f(\tilde X_b))-L(Y,f(X))]$.
@@ -285,12 +293,12 @@ Related work:
 
 ## Citation
 
-If you use DFI in your research, please cite:
+If you use FDFI in your research, please cite:
 
 ```bibtex
 @software{dfi2026,
-  title={DFI: Python Library for Disentangled Feature Importance},
-  author={DFI Team},
+  title={FDFI: Python Library for Disentangled Feature Importance},
+  author={FDFI Team},
   year={2026},
   url={https://github.com/jinhongdu-lab/FDFI}
 }
@@ -304,8 +312,10 @@ If you use DFI in your research, please cite:
 
 @inproceedings{chen2026flow,
   title={Flow-Disentangled Feature Importance},
-  author={Chen, Xin and Guo, Yifan and Du, Jin-Hong},
-  booktitle={The Thirteenth International Conference on Learning Representations},
+  author={Chen, Xingshu and Guo, Yifeng and Du, Jin-Hong},
+  booktitle={International Conference on Learning Representations},
+  volume={2026},
+  pages={57346--57388},
   year={2026}
 }
 ```
