@@ -153,7 +153,7 @@ This is the normalization and naming used in the FDFI paper. Conventional CPI
 without the factor $1/2$ is twice the package's CPI. Under squared-error loss,
 an exact disentangling map, and a Bayes predictor, CPI and the infinite-resample
 SCPI have the same population target. With the same finite resamples,
-$2\,\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\operatorname{Var}_b[f(\tilde X_b)]$.
+$2\,\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]$.
 
 ```python
 from fdfi.explainers import FlowExplainer
