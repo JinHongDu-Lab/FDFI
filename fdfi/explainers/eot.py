@@ -6,6 +6,7 @@ import numpy as np
 from typing import Optional, Callable, Any
 from scipy.spatial.distance import pdist
 from .base import Explainer
+from ..results import ExplanationResults
 
 
 class EOTExplainer(Explainer):
@@ -128,7 +129,27 @@ class EOTExplainer(Explainer):
         self.Z_full = self.s_fwd * X_whitened
         self._compute_diagnostics(report_title="EOTExplainer")
 
-    def __call__(self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any) -> dict:
+    def __call__(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any
+    ) -> ExplanationResults:
+        """Compute feature importance for new observations.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Input data, shape (n_samples, n_features).
+        y : numpy.ndarray, optional
+            True outcomes. When omitted, use the label-free divergence form.
+        **kwargs : dict
+            Additional parameters for API compatibility.
+
+        Returns
+        -------
+        ExplanationResults
+            Dict-compatible importance and uncertainty estimates in X- and
+            Z-space, with attribute access, ``importance()``, ``to_frame()``
+            and ``top_features()``.
+        """
         n, d = X.shape
         Z = self.s_fwd * (X - self.mean) @ self.L_inv
         y_pred = self.model(X)
@@ -150,7 +171,7 @@ class EOTExplainer(Explainer):
             "se_Z": np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n),
         }
         self._cache_results(results, n)
-        return results
+        return ExplanationResults(results, explainer_name=type(self).__name__, n=n)
 
     def _phi_Z(self, Z: np.ndarray, y_pred: np.ndarray, y_true: Optional[np.ndarray] = None) -> np.ndarray:
         """Compute per-sample uncentered UEIF in Z-space via counterfactual resampling.

@@ -9,6 +9,8 @@ from importlib import metadata as importlib_metadata
 from pathlib import Path
 import re
 
+from .results import ConfIntResults, ExplanationResults
+
 
 def _version_from_pyproject() -> str:
     """Read package version from pyproject.toml when running from source tree."""
@@ -61,6 +63,8 @@ from .losses import (
 __all__ = [
     "__version__",
     "Crossfitting",
+    "ExplanationResults",
+    "ConfIntResults",
     "resolve_loss",
     "available_losses",
     "squared_error",

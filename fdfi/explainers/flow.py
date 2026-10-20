@@ -5,6 +5,7 @@ Flow-based DFI explainer using normalizing flows.
 import numpy as np
 from typing import Optional, Union, Callable, Any
 from .base import Explainer
+from ..results import ExplanationResults
 
 
 class FlowExplainer(Explainer):
@@ -100,6 +101,15 @@ class FlowExplainer(Explainer):
     >>> results = explainer(X_test)
     """
     
+    def _repr_lines(self) -> list:
+        lines = super()._repr_lines()
+        fitted = getattr(self, "flow_model", None) is not None
+        lines.insert(
+            2,
+            "  Flow model: " + ("fitted" if fitted else "not fitted (call fit_flow())"),
+        )
+        return lines
+
     def __init__(
         self,
         model: Callable[[np.ndarray], np.ndarray],
@@ -524,7 +534,9 @@ class FlowExplainer(Explainer):
         
         return ueifs_cpi, ueifs_scpi
     
-    def __call__(self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any) -> dict:
+    def __call__(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any
+    ) -> ExplanationResults:
         """
         Compute feature importance.
         
@@ -541,8 +553,9 @@ class FlowExplainer(Explainer):
         
         Returns
         -------
-        dict
-            Dictionary containing:
+        ExplanationResults
+            Dict-compatible result with attribute access, ``importance()``,
+            ``to_frame()`` and ``top_features()``. Contains:
             - phi_Z: Z-space importance (d,) - CPI or SCPI depending on method
             - std_Z: Standard deviation (d,)
             - se_Z: Standard error (d,)
@@ -666,4 +679,4 @@ class FlowExplainer(Explainer):
             })
         
         self._cache_results(results, n)
-        return results
+        return ExplanationResults(results, explainer_name=type(self).__name__, n=n)

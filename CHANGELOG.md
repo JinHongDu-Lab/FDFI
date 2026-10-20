@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.0]
+### Changed
+- **Result objects.** Calling an explainer now returns an `ExplanationResults`
+  object and `conf_int()` returns a `ConfIntResults` object instead of a plain
+  `dict`. Both subclass `dict`, so key access such as `results["phi_X"]` keeps
+  working, and add attribute access (`results.phi_X`), `to_frame()`,
+  `top_features()` / `significant()` and an informative printed summary.
+- **`summary()` no longer returns the table when printing.** With the default
+  `print_output=True` it prints the table and returns `None`, so the table is no
+  longer displayed twice in Jupyter/IPython. Use `print_output=False` to obtain
+  the string.
+
+### Added
+- Informative `__repr__` / `__str__` for all explainer classes (`OTExplainer`,
+  `EOTExplainer`, `FlowExplainer`, `Crossfitting`) and result classes.
+
+### Fixed
+- Return type annotation of `OTExplainer.__call__` (was `np.ndarray`).
+- API docs listed a non-existent `summary(feature_names=None)` signature.
+
 ## [0.1.0]
 ### Fixed
 - **CPI/SCPI resampling definitions** now match the FDFI paper. ``method='cpi'``

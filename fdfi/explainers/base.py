@@ -15,6 +15,7 @@ from ..utils import (
     compute_mmd,
 )
 from ..losses import resolve_loss
+from ..results import ConfIntResults
 
 
 class Explainer:
@@ -122,6 +123,73 @@ class Explainer:
     def _cache_results(self, results: dict, n: int) -> None:
         self._last_results = results
         self._last_n = n
+
+    # ------------------------------------------------------------------
+    # Printing
+    # ------------------------------------------------------------------
+    #: Attributes shown in the printed representation when present.
+    _REPR_PARAMS = (
+        "method",
+        "nsamples",
+        "sampling_method",
+        "epsilon",
+        "auto_epsilon",
+        "random_state",
+    )
+
+    def _repr_loss(self) -> str:
+        loss = getattr(self, "loss", None)
+        if loss is None:
+            return "squared_error (default)"
+        if isinstance(loss, str):
+            return loss
+        return getattr(loss, "__name__", type(loss).__name__)
+
+    def _repr_lines(self) -> list:
+        lines = [type(self).__name__]
+        data = getattr(self, "data", None)
+        if data is not None:
+            shape = np.shape(data)
+            if len(shape) == 2:
+                lines.append(
+                    f"  Background data: {shape[0]} samples x {shape[1]} features"
+                )
+            else:
+                lines.append(f"  Background data: shape {shape}")
+        else:
+            lines.append("  Background data: none")
+        params = [
+            f"{k}={getattr(self, k)!r}" for k in self._REPR_PARAMS if hasattr(self, k)
+        ]
+        params.append(f"loss={self._repr_loss()}")
+        lines.append("  Settings: " + ", ".join(params))
+        diag = getattr(self, "diagnostics", None)
+        if isinstance(diag, dict) and "latent_independence_label" in diag:
+            lines.append(
+                "  Diagnostics: latent independence "
+                f"{diag.get('latent_independence_label')}, distribution fidelity "
+                f"{diag.get('distribution_fidelity_label')}"
+            )
+        if getattr(self, "_last_results", None) is None:
+            lines.append(
+                "  Status: not yet applied; call explainer(X) to compute importance"
+            )
+        else:
+            lines.append(
+                f"  Status: importance computed on {getattr(self, '_last_n', None)} "
+                "samples; "
+                "see .conf_int() or .summary()"
+            )
+        return lines
+
+    def __repr__(self) -> str:
+        try:
+            return "\n".join(self._repr_lines())
+        except Exception:
+            return type(self).__name__
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     def _ueif_from_counterfactuals(
         self,
@@ -251,7 +319,7 @@ class Explainer:
         margin_quantile: float = 0.95,
         alternative: str = "two-sided",
         verbose: bool = False,
-    ) -> dict:
+    ) -> ConfIntResults:
         """
         Compute confidence intervals and significance statistics for feature importance.
 
@@ -293,8 +361,10 @@ class Explainer:
 
         Returns
         -------
-        dict
-            Dictionary with the following keys (each an array of length *d* or *G*):
+        ConfIntResults
+            Dict-compatible inference results with attribute access,
+            ``to_frame()`` and ``significant()``. Keys include (arrays of
+            length *d* or *G*):
 
             - ``'score'``: estimated feature importance (mean UEIF).
             - ``'se'``: standard error of the mean UEIF (after variance floor).
@@ -448,7 +518,7 @@ class Explainer:
 
         if groups is not None:
             out["groups"] = group_names
-        return out
+        return ConfIntResults(out, alpha=alpha, target=target)
 
     # ------------------------------------------------------------------
     # Margin estimation helpers
@@ -532,9 +602,11 @@ class Explainer:
             )
         return margin
 
-    def summary(self, alpha: float = 0.05, print_output: bool = True, **kwargs) -> str:
+    def summary(
+        self, alpha: float = 0.05, print_output: bool = True, **kwargs
+    ) -> Optional[str]:
         """
-        Print and return a formatted feature importance summary table.
+        Print a formatted feature importance summary table.
 
         Computes confidence intervals via :meth:`conf_int` and formats the
         results as a human-readable table.  Supports both individual-feature
@@ -564,9 +636,9 @@ class Explainer:
 
         Returns
         -------
-        str
-            The formatted summary string (same text that is printed when
-            ``print_output=True``).
+        None or str
+            ``None`` when ``print_output=True`` (the table is printed to stdout).
+            The formatted table as a string when ``print_output=False``.
 
         Examples
         --------
@@ -586,7 +658,11 @@ class Explainer:
             )
         """
         results = self.conf_int(alpha=alpha, **kwargs)
-        return self._format_summary(results, alpha, print_output)
+        text = self._format_summary(results, alpha, print_output=False)
+        if print_output:
+            print(text)
+            return None
+        return text
 
     # ------------------------------------------------------------------
     # Group importance

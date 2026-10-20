@@ -20,20 +20,39 @@ The following methods are available on all working explainer classes
 
 ``__call__(X_test)``
     Compute per-sample UEIFs and aggregate them to ``phi_X`` / ``phi_Z`` plus
-    standard errors.  Returns a ``dict``; also stores ``explainer.ueifs_X``
-    and ``explainer.ueifs_Z``.
+    standard errors. Returns a dict-compatible ``ExplanationResults`` with
+    attribute access, ``importance()``, ``to_frame()`` and ``top_features()``;
+    also stores ``explainer.ueifs_X`` and ``explainer.ueifs_Z``.
 
 ``conf_int(alpha=0.05, alternative='two-sided', margin=0.0, multitest_method=None, ...)``
-    Compute confidence intervals and p-values from the stored UEIFs.  See
+    Compute confidence intervals and p-values from the stored UEIFs. Returns
+    a dict-compatible ``ConfIntResults`` with ``to_frame()`` and
+    ``significant()`` methods. See
     :doc:`../user_guide/statistical_inference` for detailed usage.
 
-``summary(feature_names=None)``
+``summary(alpha=0.05, print_output=True, **kwargs)``
     Print a tabular summary of feature importances, standard errors, and
-    significance.
+    significance, returning ``None``. Returns the table as a string only when
+    ``print_output=False``.
 
 ``diagnose(X_orig=None, Z_full=None, report_title='')``
     (Re-)compute latent independence (dCor) and distribution fidelity (MMD)
     diagnostics.
+
+Result objects
+--------------
+
+Result containers subclass ``dict``, preserving key access such as
+``results["phi_X"]`` while supporting ``results.phi_X``. Calling ``to_frame()``
+requires pandas, imported only when this method is used.
+
+.. autoclass:: fdfi.results.ExplanationResults
+   :members:
+   :show-inheritance:
+
+.. autoclass:: fdfi.results.ConfIntResults
+   :members:
+   :show-inheritance:
 
 Loss Functions
 --------------
@@ -107,13 +126,13 @@ point for most use cases.
    explainer = OTExplainer(model, data=X_background, nsamples=50)
    results = explainer(X_test)
 
-   print("Feature importance (X-space):", results["phi_X"])
-   print("Standard errors:", results["se_X"])
+   print("Feature importance (X-space):", results.phi_X)
+   print("Standard errors:", results.se_X)
 
    # Compute confidence intervals with FDR control (Benjamini-Hochberg)
    ci = explainer.conf_int(multitest_method='fdr_bh', alpha=0.05)
-   print("Significant features after FDR control:", np.where(ci["reject_null"])[0])
-   print("Adjusted p-values:", ci["pvalue_adj"])
+   print("Significant features after FDR control:", ci.significant())
+   print("Adjusted p-values:", ci.pvalue_adj)
 
 Entropic Optimal Transport (EOTExplainer)
 -----------------------------------------

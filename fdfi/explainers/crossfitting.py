@@ -5,6 +5,7 @@ Cross-fitted DFI explainer for valid inference at small sample sizes.
 import numpy as np
 from typing import Optional, Union, Callable, Any, Tuple
 from .base import Explainer
+from ..results import ExplanationResults
 from .ot import OTExplainer
 from .eot import EOTExplainer
 from .flow import FlowExplainer
@@ -63,6 +64,14 @@ class Crossfitting(Explainer):
         Per-sample Z-space UEIFs, shape (n, d), after calling with
         ``X=None``.
     """
+
+    def _repr_lines(self) -> list:
+        lines = super()._repr_lines()
+        n_folds = getattr(getattr(self, "cv_", None), "n_splits", "?")
+        explainer_class = getattr(self, "explainer_class", None)
+        base = getattr(explainer_class, "__name__", str(explainer_class))
+        lines.insert(2, f"  Cross-fitting: {base} on {n_folds} folds")
+        return lines
 
     def __init__(
         self,
@@ -202,7 +211,7 @@ class Crossfitting(Explainer):
         self,
         X: Optional[np.ndarray] = None,
         **kwargs: Any,
-    ) -> dict:
+    ) -> ExplanationResults:
         """
         Compute cross-fitted feature importance.
 
@@ -221,8 +230,9 @@ class Crossfitting(Explainer):
 
         Returns
         -------
-        dict
-            Same format as OTExplainer / FlowExplainer:
+        ExplanationResults
+            Dict-compatible result with attribute access, ``importance()``,
+            ``to_frame()`` and ``top_features()``. Same fields as OT / Flow:
             ``phi_X, std_X, se_X, phi_Z, std_Z, se_Z``.
         """
         if X is not None:
@@ -233,7 +243,14 @@ class Crossfitting(Explainer):
     # Internal: cross-fit on self.data
     # ------------------------------------------------------------------
 
-    def _crossfit(self) -> dict:
+    def _crossfit(self) -> ExplanationResults:
+        """Cross-fit and return dict-compatible ExplanationResults.
+
+        Returns
+        -------
+        ExplanationResults
+            Aggregated importance and uncertainty for evaluated samples.
+        """
         n, d = self.data.shape
         self.fold_explainers = []
         self.fold_indices = []
@@ -358,13 +375,22 @@ class Crossfitting(Explainer):
             "se_Z": ueifs_Z_thresh.std(axis=0, ddof=ddof) / sqn_eff,
         }
         self._cache_results(results, n_eff)
-        return results
+        return ExplanationResults(
+            results, explainer_name=type(self).__name__, n=n_eff
+        )
 
     # ------------------------------------------------------------------
     # Internal: ensemble prediction on new data
     # ------------------------------------------------------------------
 
-    def _ensemble_predict(self, X: np.ndarray) -> dict:
+    def _ensemble_predict(self, X: np.ndarray) -> ExplanationResults:
+        """Predict with the fitted folds.
+
+        Returns
+        -------
+        ExplanationResults
+            Dict-compatible importance and uncertainty on the new data.
+        """
         if not self.fold_explainers:
             # No fold explainers yet — run cross-fitting first
             self._crossfit()
@@ -400,4 +426,6 @@ class Crossfitting(Explainer):
             "se_Z": se_Z,
         }
         self._cache_results(results, n)
-        return results
+        return ExplanationResults(
+            results, explainer_name=type(self).__name__, n=n
+        )
