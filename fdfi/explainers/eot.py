@@ -159,6 +159,9 @@ class EOTExplainer(Explainer):
     **kwargs : dict
         Extra arguments forwarded to the base Explainer.
     """
+    #: Attributes shown in the printed representation.
+    _REPR_PARAMS = Explainer._REPR_PARAMS + ("latent", "eta", "n_eta", "source")
+
     def __init__(
         self,
         model: Callable[[np.ndarray], np.ndarray],
@@ -313,8 +316,18 @@ class EOTExplainer(Explainer):
             Z = Z + self.sigma_fwd * rng.standard_normal(x_w.shape)
         return Z
 
-    def _eta(self, Z: np.ndarray, rng: Optional[np.random.Generator] = None, return_var: bool = False):
+    def _eta(
+        self,
+        Z: np.ndarray,
+        rng: Optional[np.random.Generator] = None,
+        return_var: bool = False,
+        n_draws: Optional[int] = None,
+    ):
         """Estimated latent regression function eta(z) = E[Y | Z = z].
+
+        ``n_draws`` overrides ``self.n_eta`` (the number of coupling draws used by
+        ``eta="mc"``); the counterfactual evaluation in :meth:`_phi_Z` uses one
+        draw per replicate.
 
         With ``return_var=True`` also returns the Monte Carlo variance of the
         estimate at each point (``Var_xi[model(...)] / n_eta`` for ``eta="mc"``;
@@ -334,15 +347,16 @@ class EOTExplainer(Explainer):
             out = np.asarray(self.model(Z @ self.L_z + self.mean), dtype=float)
             return (out, np.zeros_like(out)) if return_var else out
         rng = self._rng if rng is None else rng
-        draws = np.empty((self.n_eta, Z.shape[0]))
-        for k in range(self.n_eta):
+        n_draws = self.n_eta if n_draws is None else n_draws
+        draws = np.empty((n_draws, Z.shape[0]))
+        for k in range(n_draws):
             xi = rng.standard_normal(Z.shape)
             X_w = self.s_fwd * Z + self.sigma_fwd * xi
             draws[k] = np.asarray(self.model(X_w @ self.L + self.mean), dtype=float)
         mean = draws.mean(axis=0)
         if not return_var:
             return mean
-        var = draws.var(axis=0, ddof=1) / self.n_eta if self.n_eta > 1 else np.zeros_like(mean)
+        var = draws.var(axis=0, ddof=1) / n_draws if n_draws > 1 else np.zeros_like(mean)
         return mean, var
 
     # ------------------------------------------------------------------ #
@@ -443,7 +457,14 @@ class EOTExplainer(Explainer):
                 raise ValueError(f"Unknown sampling_method: {self.sampling_method}")
 
             Z_flat = Z_tilde.reshape(-1, d)
-            y_tilde_all = self._eta(Z_flat, rng).reshape(self.nsamples, n)
+            # "loco" and "scpi" only use the average over replicates, so each
+            # replicate gets a single coupling draw: the joint draws of (Z_j, xi)
+            # estimate the same integrated regression with nsamples evaluations
+            # per point instead of nsamples * n_eta, and the Monte Carlo
+            # correction in _ueif_from_counterfactuals accounts for the noise.
+            # "cpi" scores each replicate separately and keeps n_eta draws.
+            n_draws = None if self.method == "cpi" else 1
+            y_tilde_all = self._eta(Z_flat, rng, n_draws=n_draws).reshape(self.nsamples, n)
             ueifs_Z[:, j] = self._ueif_from_counterfactuals(
                 y_pred, y_tilde_all, method=self.method, y_true=y_true, base_var=base_var
             )

@@ -12,6 +12,7 @@
   as ``EOTExplainer.__call__``.
 
 ### Added
+- ``EOTExplainer`` prints its ``latent``, ``eta``, ``n_eta`` and ``source`` settings.
 - ``EOTExplainer`` options ``latent`` (``'draw'`` from the coupling, default, or
   ``'barycentric'``), ``eta`` (``'mc'`` kernel-averaged latent regression, default,
   or ``'plugin'``), ``source`` (``'gaussian'`` or ``'empirical'`` semi-discrete
@@ -19,6 +20,10 @@
   variance corrections), as analysed in the DFI paper revision.
 
 ### Changed
+- Counterfactual evaluation draws the resampled latent coordinate and the
+  coupling noise jointly (one coupling draw per replicate) for the ``'loco'`` and
+  ``'scpi'`` scores, which estimates the same quantity with ``n_eta`` times fewer
+  model evaluations; ``'cpi'`` keeps ``n_eta`` draws per replicate.
 - **Migration:** ``EOTExplainer`` now defaults to ``method='loco'`` and randomized
   latent draws; the previous behaviour corresponds to
   ``EOTExplainer(..., latent='barycentric', eta='plugin', method='cpi')`` up to the

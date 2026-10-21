@@ -77,10 +77,9 @@ EOTExplainer (Entropic OT)
 
 **Pros:**
 
-- Relaxes Gaussian assumption
+- Closed-form Gaussian coupling, or an empirical coupling that relaxes the Gaussian assumption
 - Adaptive regularization (``auto_epsilon=True``)
-- Supports categorical features via Gower distance
-- Stochastic transport for variance reduction
+- Randomized latent features with Monte Carlo corrections for valid inference
 
 **Cons:**
 
@@ -96,20 +95,33 @@ EOTExplainer (Entropic OT)
    explainer = EOTExplainer(
        model.predict,
        data=X_background,
-       # Regularization
-       auto_epsilon=True,      # Auto-tune from median distance
-       epsilon=0.1,            # Manual epsilon (if auto_epsilon=False)
-       
-       # Transport target
-       target="gaussian",      # or "empirical"
-       
-       # Stochastic transport
-       stochastic_transport=True,
-       n_transport_samples=10,
-       
-       # Cost function for mixed data
-       cost_metric="sqeuclidean",  # or "gower", "auto"
+       # Regularization of the entropic coupling (whitened scale)
+       epsilon=0.1,            # or auto_epsilon=True to choose it from the data
+
+       # Disentangling geometry
+       source="gaussian",      # closed-form Gaussian coupling, or "empirical"
+                               # (semi-discrete coupling of the background sample)
+       latent="draw",          # draw Z from the coupling, or "barycentric" (its mean)
+       eta="mc",               # kernel-averaged latent regression, or "plugin"
+       n_eta=10,               # coupling draws for the Monte Carlo average
+
+       # Score
+       method="loco",          # integrated LOCO with Monte Carlo corrections,
+                               # or "scpi" / "cpi"
+       nsamples=50,            # counterfactual replicates per feature
    )
+   results = explainer(X_test)
+
+With ``epsilon > 0`` the coupling is randomized: the latent features are drawn
+from the conditional law of the coupling (``latent="draw"``) and the latent
+regression is the average of the model over that law (``eta="mc"``).  The
+score ``method="loco"`` removes the Monte Carlo bias of the averaged
+counterfactual prediction and of the baseline, so it is the recommended
+default for inference.  The previous behaviour, which evaluated the model at
+the barycentric map, corresponds to ``latent="barycentric", eta="plugin",
+method="cpi"``.  The empirical source needs ``epsilon`` comparable to the
+typical squared distance between whitened points; for very small ``epsilon``
+it degenerates to a nearest-neighbour assignment.
 
 FlowExplainer (Flow-Based DFI)
 ------------------------------
