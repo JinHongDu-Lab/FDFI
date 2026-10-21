@@ -223,9 +223,10 @@ class TestEOTExplainer:
         assert np.all(np.isfinite(results["phi_X"]))
         assert np.all(results["std_X"] >= 0)
 
-        Z = explainer.s_fwd * (X_test - explainer.mean) @ explainer.L_inv
-        y_pred = exp3_model(X_test)
-        ueifs_Z = explainer._phi_Z(Z, y_pred)
+        rng = np.random.default_rng([explainer.random_state, 12])
+        Z = explainer._latent((X_test - explainer.mean) @ explainer.L_inv, rng)
+        y_pred, base_var = explainer._eta(Z, rng, return_var=True)
+        ueifs_Z = explainer._phi_Z(Z, y_pred, base_var=base_var)
 
         ueifs_X = ueifs_Z @ (explainer.W ** 2).T
         phi_X = np.mean(ueifs_X, axis=0)
