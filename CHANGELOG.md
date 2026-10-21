@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 ### Fixed
+- **CPI first-order bias**: with outcomes and the squared error, ``method='cpi'``
+  adds the orthogonalizing term ``(y - ŷ)(ŷ - E_b[ŷ_b])`` so that its expectation
+  no longer depends on the regression error at first order.
 - **Gaussian EOT coupling**: ``EOTExplainer`` used the scale ``sqrt(1+eps)/(1+eps/2)``,
   which is not the entropic OT solution. The Gaussian coupling between
   ``N(0, I)`` marginals with quadratic cost has cross-covariance

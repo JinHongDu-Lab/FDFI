@@ -62,7 +62,8 @@ class TestExplainer:
             explainer.shap_values(X)
 
     def test_cpi_matches_normalized_fdfi_formula(self):
-        """CPI is one half of the mean per-resample loss difference."""
+        """CPI is one half of the mean per-resample loss difference plus the
+        orthogonalizing term (y - ŷ)(ŷ - mean_b ŷ_b) for the squared error."""
         explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
         y_pred = np.array([0.0, 1.0, 2.0])
         y_true = np.array([1.0, 3.0, -1.0])
@@ -76,6 +77,7 @@ class TestExplainer:
         )
         base = (y_true - y_pred) ** 2
         expected = 0.5 * (((y_true[None, :] - y_tilde) ** 2).mean(axis=0) - base)
+        expected = expected + (y_true - y_pred) * (y_pred - y_tilde.mean(axis=0))
 
         assert np.allclose(actual, expected)
 
@@ -97,7 +99,8 @@ class TestExplainer:
         assert np.allclose(actual, expected)
 
     def test_l2_finite_resample_identity(self):
-        """For L2, 2*CPI = SCPI + the counterfactual prediction variance."""
+        """For L2, 2*CPI = SCPI + the counterfactual prediction variance
+        + 2 (y - ŷ)(ŷ - mean_b ŷ_b), the orthogonalizing term carried by CPI."""
         explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
         y_pred = np.array([0.0, 1.0, 2.0])
         y_true = np.array([1.0, 3.0, -1.0])
@@ -114,7 +117,8 @@ class TestExplainer:
             y_pred, y_tilde, method="scpi", y_true=y_true
         )
 
-        assert np.allclose(2.0 * cpi, scpi + y_tilde.var(axis=0))
+        ortho = (y_true - y_pred) * (y_pred - y_tilde.mean(axis=0))
+        assert np.allclose(2.0 * cpi, scpi + y_tilde.var(axis=0) + 2.0 * ortho)
 
 
 def generate_exp3_data(n=500, rho=0.8, seed=42):

@@ -97,7 +97,7 @@ class TestIntegratedLOCO:
         # with weights (s L_{lj})^2 the attributed total is s^2 times the latent total
         assert res["phi_X"].sum() == pytest.approx(s ** 2 * res["phi_Z"].sum(), rel=0.05)
 
-    def test_cpi_has_first_order_bias_under_perturbed_regression(self):
+    def test_orthogonalized_cpi_and_loco_have_second_order_bias_under_perturbed_regression(self):
         rng = np.random.default_rng(4)
         d = 2
         X_bg = rng.standard_normal((3000, d))
@@ -113,7 +113,7 @@ class TestIntegratedLOCO:
         loco_bias = EOTExplainer(model_biased, X_bg, method="loco", **kw)(X, y)["phi_Z"][0]
         phi = 4.0
         assert cpi_true == pytest.approx(phi, abs=0.4)
-        assert cpi_bias - phi == pytest.approx(t * phi, abs=0.4)
+        assert cpi_bias - phi == pytest.approx(-t ** 2 * phi, abs=0.4)
         assert loco_bias - phi == pytest.approx(-t ** 2 * phi, abs=0.4)
 
 
@@ -146,3 +146,25 @@ class TestEmpiricalSource:
         assert np.all(np.isfinite(r_emp["phi_Z"]))
         assert r_emp["phi_Z"][0] > 3 * max(r_emp["phi_Z"][1], 1e-3)
         assert r_emp["phi_Z"][0] == pytest.approx(r_gau["phi_Z"][0], rel=0.35)
+
+
+class TestOrthogonalizedCPI:
+    def test_cpi_matches_integrated_loco_under_misspecification(self):
+        """With outcomes and squared error, CPI carries the orthogonalizing term and
+        shares the expectation of the integrated LOCO score: b_hat_j (2 b_j - b_hat_j)
+        for a linear model fitted with coefficients b_hat on independent Gaussian X."""
+        rng = np.random.default_rng(1)
+        n, d = 6000, 4
+        X = rng.standard_normal((n, d))
+        b = np.array([1.0, 0.5, 0.0, 2.0])
+        y = X @ b + rng.standard_normal(n)
+        b_hat = b + np.array([0.3, -0.3, 0.3, 0.0])
+        model = lambda Xo: Xo @ b_hat
+        target = b_hat * (2 * b - b_hat)
+        phi = {}
+        for m in ("cpi", "loco"):
+            ex = EOTExplainer(model, X, epsilon=0.01, nsamples=50, n_eta=10,
+                              random_state=3, method=m, compute_diagnostics=False)
+            phi[m] = np.asarray(ex(X, y)["phi_Z"])
+        assert np.allclose(phi["cpi"], target, rtol=0.05, atol=0.05)
+        assert np.allclose(phi["cpi"], phi["loco"], atol=0.03)

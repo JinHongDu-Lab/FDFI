@@ -209,7 +209,9 @@ class Explainer:
 
         - ``'cpi'`` (the normalized FDFI convention): apply the loss to each
           replicate, average the loss differences, and multiply by one half —
-          ``0.5 * E_b[L(r, ŷ_b) - L(r, ŷ)]``.
+          ``0.5 * E_b[L(r, ŷ_b) - L(r, ŷ)]``.  With outcomes and the squared
+          error the orthogonalizing term ``(y - ŷ)(ŷ - E_b[ŷ_b])`` is added,
+          which removes the first-order bias in the regression error.
         - ``'scpi'`` (Sobol-CPI): average the counterfactual predictions first,
           then apply the loss — ``L(r, E_b[ŷ_b]) - L(r, ŷ)``.
         - ``'loco'`` (integrated LOCO, squared error only): ``'scpi'`` minus the
@@ -283,7 +285,15 @@ class Explainer:
 
         if method == "cpi":
             perturbed = loss(ref[None, :], y_tilde_all).mean(axis=0)
-            return 0.5 * (perturbed - base)
+            score = 0.5 * (perturbed - base)
+            if y_true is not None and loss is squared_error:
+                # Orthogonalized CPI: the plain score has the first-order bias
+                # E[(eta_hat - eta_hat_{-j}) (eta - eta_hat)] in the regression
+                # error; adding (y - ŷ)(ŷ - mean_b ŷ_b) removes it so that the
+                # expectation matches the integrated LOCO estimand.
+                m = np.asarray(y_tilde_all, dtype=float).mean(axis=0)
+                score = score + (ref - np.asarray(y_pred)) * (np.asarray(y_pred) - m)
+            return score
 
         if method == "loco":
             if loss is squared_error:

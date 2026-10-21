@@ -61,32 +61,15 @@ continuous data problems.
 How do I handle categorical features?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Use EOTExplainer with Gower distance:
-
-.. code-block:: python
-
-   from fdfi.explainers import EOTExplainer
-
-   explainer = EOTExplainer(
-       model.predict,
-       data=X_train,
-       cost_metric="gower",  # or "auto"
-       categorical_threshold=10,  # Features with ≤10 unique values = categorical
-   )
-
-You can also manually specify feature types:
-
-.. code-block:: python
-
-   import numpy as np
-   feature_types = np.array(["continuous", "binary", "categorical", "continuous"])
-   
-   explainer = EOTExplainer(
-       model.predict,
-       data=X_train,
-       cost_metric="gower",
-       feature_types=feature_types,
-   )
+The explainers whiten the features and use the quadratic cost, so every
+feature is treated as continuous.  Binary or ordinal features can be included
+as numeric columns, but the Gaussian disentangling map is then only an
+approximation, and the entropic coupling with ``source="empirical"`` needs a
+regularization ``epsilon`` comparable to the typical squared distance between
+whitened points.  Nominal features with several levels should be encoded before
+fitting the model and the explainer; reporting their importance as a group
+(``conf_int(groups=...)`` or ``summary(groups=...)``) aggregates the encoded
+columns.  There is no built-in Gower or mixed-type cost.
 
 Statistical Inference Questions
 -------------------------------
