@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.2.1] - 2026-10-23
+### Fixed
+- **Gaussian EOT coupling**: ``EOTExplainer`` used the scale
+  ``sqrt(1+eps)/(1+eps/2)``, which is not the entropic OT solution. The
+  Gaussian coupling between ``N(0, I)`` marginals with quadratic cost has
+  cross-covariance ``s = (sqrt(eps^2 + 16) - eps)/4`` and conditional variance
+  ``1 - s^2`` (``fdfi.explainers.eot.gaussian_eot_scale``).
+- **EOT latent features** are drawn from the coupling, so they have the
+  ``N(0, I)`` marginal, and the latent regression is the average of the model
+  over ``n_eta`` backward draws instead of the model at the barycentric map.
+  ``Crossfitting`` uses the same construction.
+- **CPI first-order bias**: with outcomes and the squared error,
+  ``method='cpi'`` adds the orthogonalizing term ``(y - ŷ)(ŷ - E_b[ŷ_b])`` so
+  that its expectation no longer depends on the regression error at first
+  order. This applies to all explainers.
+- **Gap margin with unbiased null scores**: null scores now take either sign.
+  The ``'gap'`` rule used a floor of 1% of the smallest positive score, which
+  always created a 100x jump at the first positive score and split the null
+  cluster. With negative scores the floor is now the magnitude of the most
+  negative score, and the margin is clipped at zero, as for the
+  ``'mixture'`` rule.
+- The FAQ described Gower-distance options for ``EOTExplainer`` that do not
+  exist, and the user guide and API page listed nonexistent ``target``,
+  ``stochastic_transport`` and ``cost_metric`` options.
+
+### Added
+- ``EOTExplainer(method='loco')``: integrated LOCO for the squared error, with
+  one joint draw of the latent coordinate and coupling noise per replicate.
+  For the squared error, ``'cpi'`` and ``'loco'`` remove the Monte Carlo bias
+  of the averaged baseline and counterfactual predictions.
+- ``EOTExplainer(n_eta=10)``: coupling draws for the latent regression.
+- ``EOTExplainer(n_jobs=1)``: features scored in parallel threads, with
+  results independent of ``n_jobs``. It speeds up models that predict on a
+  single core; models that already use all cores gain little.
+
+### Changed
+- **Migration:** ``EOTExplainer`` no longer accepts ``method='scpi'``. EOT
+  scores computed with ``epsilon > 0`` change; at ``epsilon = 0`` the coupling
+  is the Gaussian OT map. Attributed importance follows the barycentric
+  projection, so for standardized features ``sum(phi_X) = s^2 * sum(phi_Z)``.
+
 ## [0.2.0]
 ### Changed
 - **Result objects.** Calling an explainer now returns an `ExplanationResults`

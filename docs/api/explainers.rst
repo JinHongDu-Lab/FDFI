@@ -137,9 +137,9 @@ point for most use cases.
 Entropic Optimal Transport (EOTExplainer)
 -----------------------------------------
 
-The ``EOTExplainer`` uses entropic optimal transport with Sinkhorn iterations. 
-It supports adaptive epsilon, stochastic transport sampling, and both Gaussian 
-and empirical transport targets.
+The ``EOTExplainer`` couples the whitened features with ``N(0, I)`` by the
+closed-form Gaussian entropic OT coupling.  It supports a fixed or adaptive
+epsilon and the CPI or integrated LOCO scores.
 
 .. autoclass:: fdfi.explainers.EOTExplainer
    :members:
@@ -156,9 +156,8 @@ and empirical transport targets.
        model.predict,
        X_background,
        auto_epsilon=True,           # Adaptive regularization
-       stochastic_transport=True,   # Sample from transport kernel
-       n_transport_samples=10,      # Number of transport samples
-       target="gaussian",           # or "empirical"
+       n_eta=10,                    # Coupling draws for the latent regression
+       method="loco",               # Integrated LOCO (squared error only)
    )
    results = explainer(X_test)
 

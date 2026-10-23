@@ -64,10 +64,11 @@ DFI provides two main approaches:
 
 **Entropic OT (EOTExplainer)**
 
-- Relaxes Gaussian assumption using Sinkhorn algorithm
+- Closed-form Gaussian entropic coupling: :math:`Z \mid X \sim N(s L^{-1}(X - \mu), (1 - s^2) I)`
+  with :math:`s = (\sqrt{\varepsilon^2 + 16} - \varepsilon)/4`
 - Adaptive regularization via median distance heuristic
-- Supports mixed data types (continuous + categorical)
-- Better for non-Gaussian or mixed-type data
+- Latent regression averaged over the coupling, with Monte Carlo corrections
+- Importance shrinks with :math:`\varepsilon`; :math:`\varepsilon = 0` recovers Gaussian OT
 
 Flow-Disentangled Feature Importance (Flow-DFI)
 -----------------------------------------------
