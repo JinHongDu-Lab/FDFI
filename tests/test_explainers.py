@@ -62,7 +62,8 @@ class TestExplainer:
             explainer.shap_values(X)
 
     def test_cpi_matches_normalized_fdfi_formula(self):
-        """CPI is one half of the mean per-resample loss difference."""
+        """CPI is one half of the mean per-resample loss difference plus the
+        orthogonalizing term (y - ŷ)(ŷ - mean_b ŷ_b) for the squared error."""
         explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
         y_pred = np.array([0.0, 1.0, 2.0])
         y_true = np.array([1.0, 3.0, -1.0])
@@ -76,6 +77,7 @@ class TestExplainer:
         )
         base = (y_true - y_pred) ** 2
         expected = 0.5 * (((y_true[None, :] - y_tilde) ** 2).mean(axis=0) - base)
+        expected = expected + (y_true - y_pred) * (y_pred - y_tilde.mean(axis=0))
 
         assert np.allclose(actual, expected)
 
@@ -97,7 +99,8 @@ class TestExplainer:
         assert np.allclose(actual, expected)
 
     def test_l2_finite_resample_identity(self):
-        """For L2, 2*CPI = SCPI + the counterfactual prediction variance."""
+        """For L2, 2*CPI = SCPI + the counterfactual prediction variance
+        + 2 (y - ŷ)(ŷ - mean_b ŷ_b), the orthogonalizing term carried by CPI."""
         explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
         y_pred = np.array([0.0, 1.0, 2.0])
         y_true = np.array([1.0, 3.0, -1.0])
@@ -114,7 +117,8 @@ class TestExplainer:
             y_pred, y_tilde, method="scpi", y_true=y_true
         )
 
-        assert np.allclose(2.0 * cpi, scpi + y_tilde.var(axis=0))
+        ortho = (y_true - y_pred) * (y_pred - y_tilde.mean(axis=0))
+        assert np.allclose(2.0 * cpi, scpi + y_tilde.var(axis=0) + 2.0 * ortho)
 
 
 def generate_exp3_data(n=500, rho=0.8, seed=42):
@@ -223,11 +227,7 @@ class TestEOTExplainer:
         assert np.all(np.isfinite(results["phi_X"]))
         assert np.all(results["std_X"] >= 0)
 
-        Z = explainer.s_fwd * (X_test - explainer.mean) @ explainer.L_inv
-        y_pred = exp3_model(X_test)
-        ueifs_Z = explainer._phi_Z(Z, y_pred)
-
-        ueifs_X = ueifs_Z @ (explainer.W ** 2).T
+        ueifs_X, ueifs_Z = explainer._ueifs(X_test)
         phi_X = np.mean(ueifs_X, axis=0)
         std_X = np.std(ueifs_X, axis=0)
         n = ueifs_X.shape[0]
@@ -302,6 +302,13 @@ class TestEOTExplainer:
         assert ci["margin_method"] == "gap"
         assert ci["margin"] >= 0
 
+    def test_gap_margin_with_mixed_sign_null_scores(self):
+        """Null scores of either sign stay in the lower cluster."""
+        phi = np.array([3.67, 1.27, 2.38, 0.347, 1.01, -0.0031, -0.0041, 0.0047, 0.0008, -0.0056])
+        assert Explainer._gap_margin(phi) == pytest.approx(0.0047)
+        assert Explainer._gap_margin(np.array([-0.01, -0.002, 0.5, 1.0])) == 0.0
+        assert Explainer._gap_margin(np.array([0.001, 0.002, 0.5, 1.0])) == pytest.approx(0.002)
+
     def test_diagnostics_populated(self):
         X_train, _ = generate_exp3_data(n=90, seed=13)
         explainer = EOTExplainer(exp3_model, X_train, nsamples=5, random_state=0)
@@ -351,7 +358,8 @@ class TestEOTExplainer:
         d = X_train.shape[1]
         assert explainer.W.shape == (d, d)
         assert np.all(np.isfinite(explainer.W))
-        # For perfectly whitened data, W ≈ s * L (population backward = forward)
+        # Jacobian of the barycentric projection of the Gaussian coupling
+        assert np.allclose(explainer.W, explainer.s_fwd * explainer.L)
         assert explainer.s_fwd > 0 and explainer.s_fwd <= 1
 
     def test_decode_from_Z_roundtrip(self):

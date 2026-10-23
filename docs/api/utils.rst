@@ -41,8 +41,7 @@ Gower Distance
 .. autofunction:: fdfi.utils.gower_cost_matrix
 
 Computes the Gower distance matrix for mixed-type data (continuous, binary,
-and categorical features). Used by ``EOTExplainer`` when ``cost_metric="gower"``
-or ``cost_metric="auto"``.
+and categorical features).
 
 Internal Helpers
 ----------------

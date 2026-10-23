@@ -5,6 +5,7 @@ Optimal-transport (Gaussian) DFI explainer.
 import numpy as np
 from typing import Optional, Callable, Any
 from .base import Explainer
+from ..results import ExplanationResults
 
 
 class OTExplainer(Explainer):
@@ -104,11 +105,11 @@ class OTExplainer(Explainer):
     >>>
     >>> explainer = OTExplainer(model, data=X_bg, nsamples=50)
     >>> results = explainer(X_test)
-    >>> print(results["phi_X"])        # global importance, X-space
-    >>> print(results["phi_Z"])        # global importance, Z-space
+    >>> print(results.phi_X)        # global importance, X-space
+    >>> print(results.phi_Z)        # global importance, Z-space
     >>>
     >>> ci = explainer.conf_int(alpha=0.05, alternative="greater")
-    >>> summary_bar(results["phi_X"], results["se_X"], show=False)
+    >>> summary_bar(results.phi_X, results.se_X, show=False)
     """
     def __init__(
         self,
@@ -146,7 +147,27 @@ class OTExplainer(Explainer):
         self.Z_full = (data - self.mean) @ self.L_inv
         self._compute_diagnostics(report_title="OTExplainer")
 
-    def __call__(self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any) -> np.ndarray:
+    def __call__(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any
+    ) -> ExplanationResults:
+        """Compute feature importance for new observations.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Input data, shape (n_samples, n_features).
+        y : numpy.ndarray, optional
+            True outcomes. When omitted, use the label-free divergence form.
+        **kwargs : dict
+            Additional parameters for API compatibility.
+
+        Returns
+        -------
+        ExplanationResults
+            Dict-compatible importance and uncertainty estimates in X- and
+            Z-space, with attribute access, ``importance()``, ``to_frame()``
+            and ``top_features()``.
+        """
        
         n, d = X.shape
         Z = (X - self.mean) @ self.L_inv
@@ -187,7 +208,7 @@ class OTExplainer(Explainer):
             "se_Z": se_Z,
         }
         self._cache_results(results, n)
-        return results
+        return ExplanationResults(results, explainer_name=type(self).__name__, n=n)
 
     def _phi_Z(
         self,

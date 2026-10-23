@@ -10,7 +10,7 @@ A Python library for computing feature importance using disentangled methods, in
 
 📖 **[Read the documentation](https://fdfi.readthedocs.io/en/latest/)**
 
-Current development version: `0.1.0`
+Current development version: `0.2.1`
 
 ## Overview
 
@@ -71,6 +71,8 @@ explainer = OTExplainer(model, data=X_background, nsamples=50)
 # Explain test instances
 X_test = np.random.randn(10, 10)
 results = explainer(X_test)
+print(results)
+# With pandas installed: results.to_frame(sort=True)
 
 # Confidence intervals (post-hoc)
 ci = explainer.conf_int(alpha=0.05, target="X", alternative="two-sided")
@@ -100,7 +102,7 @@ feature_names = [f"X{i}" for i in range(X_background.shape[1])]
 correlation_heatmap(X_background, feature_names, show=False)
 
 # Global scores and standard errors from explainer output
-summary_bar(results["phi_X"], results["se_X"], feature_names, show=False)
+summary_bar(results.phi_X, results.se_X, feature_names, show=False)
 
 # Distribution of per-observation contributions
 summary_plot(explainer.ueifs_X, features=X_test, feature_names=feature_names, show=False)
@@ -124,7 +126,7 @@ You can still override both methods explicitly if needed.
 ## EOT Options (Entropic OT)
 
 `EOTExplainer` supports a fixed or adaptive epsilon, three sampling methods,
-CPI or SCPI scores, and user-chosen losses:
+CPI or integrated LOCO scores, and user-chosen losses:
 
 ```python
 from fdfi.explainers import EOTExplainer
@@ -133,8 +135,9 @@ explainer = EOTExplainer(
     model.predict,
     X_background,
     epsilon=0.1,                 # or auto_epsilon=True to choose epsilon from the data
+    n_eta=10,                    # coupling draws for the latent regression
     sampling_method="resample",  # 'resample', 'permutation', or 'normal'
-    method="cpi",                # 'cpi' or 'scpi'
+    method="cpi",                # 'cpi' or 'loco' (squared error only)
     loss="squared_error",
 )
 results = explainer(X_test)
@@ -170,8 +173,8 @@ explainer = FlowExplainer(
 )
 
 results = explainer(X_test)
-# results['phi_Z']: Z-space importance
-# results['phi_X']: same as phi_Z (Z-space methods)
+# results.phi_Z: Z-space importance
+# results.phi_X: same as phi_Z (Z-space methods)
 
 # Confidence intervals
 ci = explainer.conf_int(alpha=0.05, target="Z", alternative="two-sided")

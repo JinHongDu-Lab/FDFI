@@ -14,7 +14,8 @@ from ..utils import (
     compute_latent_independence,
     compute_mmd,
 )
-from ..losses import resolve_loss
+from ..losses import brier, resolve_loss, squared_error
+from ..results import ConfIntResults
 
 
 class Explainer:
@@ -123,25 +124,104 @@ class Explainer:
         self._last_results = results
         self._last_n = n
 
+    # ------------------------------------------------------------------
+    # Printing
+    # ------------------------------------------------------------------
+    #: Attributes shown in the printed representation when present.
+    _REPR_PARAMS = (
+        "method",
+        "nsamples",
+        "sampling_method",
+        "epsilon",
+        "auto_epsilon",
+        "random_state",
+    )
+
+    def _repr_loss(self) -> str:
+        loss = getattr(self, "loss", None)
+        if loss is None:
+            return "squared_error (default)"
+        if isinstance(loss, str):
+            return loss
+        return getattr(loss, "__name__", type(loss).__name__)
+
+    def _repr_lines(self) -> list:
+        lines = [type(self).__name__]
+        data = getattr(self, "data", None)
+        if data is not None:
+            shape = np.shape(data)
+            if len(shape) == 2:
+                lines.append(
+                    f"  Background data: {shape[0]} samples x {shape[1]} features"
+                )
+            else:
+                lines.append(f"  Background data: shape {shape}")
+        else:
+            lines.append("  Background data: none")
+        params = [
+            f"{k}={getattr(self, k)!r}" for k in self._REPR_PARAMS if hasattr(self, k)
+        ]
+        params.append(f"loss={self._repr_loss()}")
+        lines.append("  Settings: " + ", ".join(params))
+        diag = getattr(self, "diagnostics", None)
+        if isinstance(diag, dict) and "latent_independence_label" in diag:
+            lines.append(
+                "  Diagnostics: latent independence "
+                f"{diag.get('latent_independence_label')}, distribution fidelity "
+                f"{diag.get('distribution_fidelity_label')}"
+            )
+        if getattr(self, "_last_results", None) is None:
+            lines.append(
+                "  Status: not yet applied; call explainer(X) to compute importance"
+            )
+        else:
+            lines.append(
+                f"  Status: importance computed on {getattr(self, '_last_n', None)} "
+                "samples; "
+                "see .conf_int() or .summary()"
+            )
+        return lines
+
+    def __repr__(self) -> str:
+        try:
+            return "\n".join(self._repr_lines())
+        except Exception:
+            return type(self).__name__
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
     def _ueif_from_counterfactuals(
         self,
         y_pred: np.ndarray,
         y_tilde_all: np.ndarray,
         method: str = "cpi",
         y_true: Optional[np.ndarray] = None,
+        base_var: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Per-feature uncentered EIF from counterfactual predictions.
 
         Generalises the L2 residual-difference importance to an arbitrary loss
-        ``L = self._loss``.  Two averaging orders (formalised in the FDFI docs)
-        are selected via ``method``:
+        ``L = self._loss``.  The averaging order (formalised in the FDFI docs)
+        is selected via ``method``:
 
         - ``'cpi'`` (the normalized FDFI convention): apply the loss to each
           replicate, average the loss differences, and multiply by one half —
-          ``0.5 * E_b[L(r, ŷ_b) - L(r, ŷ)]``.
+          ``0.5 * E_b[L(r, ŷ_b) - L(r, ŷ)]``.  With outcomes and the squared
+          error the orthogonalizing term ``(y - ŷ)(ŷ - E_b[ŷ_b])`` is added,
+          which removes the first-order bias in the regression error.
         - ``'scpi'`` (Sobol-CPI): average the counterfactual predictions first,
           then apply the loss — ``L(r, E_b[ŷ_b]) - L(r, ŷ)``.
+        - ``'loco'`` (integrated LOCO, squared error only): ``'scpi'`` minus the
+          Monte Carlo variance ``Var_b[ŷ_b] / B`` of the averaged
+          counterfactual prediction.
+
+        When the baseline ``ŷ`` is itself a Monte Carlo average (the EOT latent
+        regression), ``base_var`` is its Monte Carlo variance, and ``'cpi'`` and
+        ``'loco'`` remove the bias it causes under the squared error.  The
+        squared error is recognized as the built-in ``squared_error`` or
+        ``brier`` loss.
 
         The factor one half makes CPI target the same population quantity as
         SCPI under squared loss, an exact disentangling map, and a Bayes
@@ -171,15 +251,18 @@ class Explainer:
         Parameters
         ----------
         y_pred : ndarray of shape (n,)
-            Model predictions on the observed inputs (the baseline ``ŷ``).
+            Baseline predictions ``ŷ``: the model at the observed inputs, or the
+            EOT latent regression at the observed latent features.
         y_tilde_all : ndarray of shape (B, n)
             Counterfactual predictions for the ``B`` Monte-Carlo replicates of
             the perturbed feature.
-        method : {'cpi', 'scpi'}, default='cpi'
+        method : {'cpi', 'scpi', 'loco'}, default='cpi'
             Averaging order (see above).
         y_true : ndarray of shape (n,), optional
             True outcomes.  When omitted, the label-free divergence form above is
             used.
+        base_var : ndarray of shape (n,), optional
+            Monte Carlo variance of ``y_pred``; None when ``y_pred`` is exact.
 
         Returns
         -------
@@ -188,8 +271,11 @@ class Explainer:
         """
         loss = self._loss
         method = (method or "cpi").lower()
-        if method not in ("cpi", "scpi"):
-            raise ValueError(f"method must be 'cpi' or 'scpi', got {method!r}")
+        if method not in ("cpi", "scpi", "loco"):
+            raise ValueError(f"method must be 'cpi', 'scpi', or 'loco', got {method!r}")
+        squared = loss in (squared_error, brier)
+        if method == "loco" and not squared:
+            raise ValueError("method='loco' is defined for the squared-error loss only.")
 
         if y_true is None:
             # Label-free: reference is the model's own prediction; subtract the
@@ -202,13 +288,41 @@ class Explainer:
             ref = np.asarray(y_true)
             base = loss(ref, y_pred)
 
+        y_pred = np.asarray(y_pred, dtype=float)
+        y_tilde_all = np.asarray(y_tilde_all, dtype=float)
+        m = y_tilde_all.mean(axis=0)
+        v0 = 0.0 if base_var is None else np.asarray(base_var, dtype=float)
+
         if method == "cpi":
             perturbed = loss(ref[None, :], y_tilde_all).mean(axis=0)
-            return 0.5 * (perturbed - base)
+            score = 0.5 * (perturbed - base)
+            if squared and y_true is not None:
+                # Orthogonalized CPI: (y - ŷ)(ŷ - mean_b ŷ_b) removes the
+                # first-order bias in the regression error, so the expectation
+                # matches the integrated LOCO estimand.  The Monte Carlo noise
+                # of ŷ enters this product with coefficient -1, hence + v0.
+                score = score + (ref - y_pred) * (y_pred - m) + v0
+            elif squared:
+                # 0.5 (ŷ - ŷ_b)^2 carries half the Monte Carlo variances of ŷ
+                # and ŷ_b, which agree on average.
+                score = score - v0
+            return score
+
+        if method == "loco":
+            B = y_tilde_all.shape[0]
+            if B < 2:
+                raise ValueError("method='loco' needs at least two counterfactual replicates.")
+            # Integrated LOCO: the sample variance of the B replicates removes
+            # the Monte Carlo variance of their mean, and v0 that of ŷ, which
+            # enters as the reference (label-free) or the baseline loss.
+            corr = y_tilde_all.var(axis=0, ddof=1) / B
+            if y_true is None:
+                return (ref - m) ** 2 - corr - v0
+            return (ref - m) ** 2 - corr - (base - v0)
 
         # Sobol-CPI estimates the restricted prediction by averaging the
         # counterfactual predictions before evaluating the loss.
-        return loss(ref, y_tilde_all.mean(axis=0)) - base
+        return loss(ref, m) - base
 
 
     def _adjust_se(
@@ -251,7 +365,7 @@ class Explainer:
         margin_quantile: float = 0.95,
         alternative: str = "two-sided",
         verbose: bool = False,
-    ) -> dict:
+    ) -> ConfIntResults:
         """
         Compute confidence intervals and significance statistics for feature importance.
 
@@ -293,8 +407,10 @@ class Explainer:
 
         Returns
         -------
-        dict
-            Dictionary with the following keys (each an array of length *d* or *G*):
+        ConfIntResults
+            Dict-compatible inference results with attribute access,
+            ``to_frame()`` and ``significant()``. Keys include (arrays of
+            length *d* or *G*):
 
             - ``'score'``: estimated feature importance (mean UEIF).
             - ``'se'``: standard error of the mean UEIF (after variance floor).
@@ -448,7 +564,7 @@ class Explainer:
 
         if groups is not None:
             out["groups"] = group_names
-        return out
+        return ConfIntResults(out, alpha=alpha, target=target)
 
     # ------------------------------------------------------------------
     # Margin estimation helpers
@@ -512,29 +628,40 @@ class Explainer:
 
         Uses log-transformed phi values so that a jump from 0.03 → 0.57
         (~19×) dominates over a jump from 3.6 → 6.2 (~1.7×).
-        The margin is set to the value at the top of the lower cluster.
+        The margin is set to the value at the top of the lower cluster, and at
+        least zero, as for the mixture rule (null scores estimate zero and can
+        be negative).
         """
         vals = np.sort(phi_hat)
         if len(vals) < 2:
             return 0.0
-        # Work in log-space; shift by a small fraction to handle zeros
-        floor = max(vals[vals > 0].min() * 1e-2, 1e-12) if np.any(vals > 0) else 1e-12
+        # Work in log-space above a floor.  A negative score is pure noise, so
+        # its magnitude sets the floor and scores within it share one level;
+        # otherwise a small fraction of the smallest positive score handles zeros.
+        if vals[0] < 0:
+            floor = -vals[0]
+        elif np.any(vals > 0):
+            floor = max(vals[vals > 0].min() * 1e-2, 1e-12)
+        else:
+            floor = 1e-12
         log_vals = np.log(np.maximum(vals, floor))
         log_gaps = np.diff(log_vals)
         k = int(np.argmax(log_gaps))      # index of the lower-side element
-        margin = float(vals[k])           # top of the null cluster
+        margin = max(float(vals[k]), 0.0)  # top of the null cluster
         if verbose:
             print(
                 f"[margin] gap: sorted phi range [{vals[0]:.4f}, {vals[-1]:.4f}], "
                 f"largest log-gap between rank {k} ({vals[k]:.4f}) and {k+1} "
-                f"({vals[k+1]:.4f}), ratio={vals[k+1]/(vals[k]+1e-15):.1f}x, "
+                f"({vals[k+1]:.4f}), ratio={np.exp(log_gaps[k]):.1f}x, "
                 f"margin={margin:.4f}"
             )
         return margin
 
-    def summary(self, alpha: float = 0.05, print_output: bool = True, **kwargs) -> str:
+    def summary(
+        self, alpha: float = 0.05, print_output: bool = True, **kwargs
+    ) -> Optional[str]:
         """
-        Print and return a formatted feature importance summary table.
+        Print a formatted feature importance summary table.
 
         Computes confidence intervals via :meth:`conf_int` and formats the
         results as a human-readable table.  Supports both individual-feature
@@ -564,9 +691,9 @@ class Explainer:
 
         Returns
         -------
-        str
-            The formatted summary string (same text that is printed when
-            ``print_output=True``).
+        None or str
+            ``None`` when ``print_output=True`` (the table is printed to stdout).
+            The formatted table as a string when ``print_output=False``.
 
         Examples
         --------
@@ -586,7 +713,11 @@ class Explainer:
             )
         """
         results = self.conf_int(alpha=alpha, **kwargs)
-        return self._format_summary(results, alpha, print_output)
+        text = self._format_summary(results, alpha, print_output=False)
+        if print_output:
+            print(text)
+            return None
+        return text
 
     # ------------------------------------------------------------------
     # Group importance

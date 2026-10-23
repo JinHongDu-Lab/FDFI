@@ -17,18 +17,15 @@ Quick Decision Guide
    * - General use, continuous data
      - ``OTExplainer``
      - Fast, stable, good default
-   * - Non-Gaussian data
+   * - Smoothed disentangling map
      - ``EOTExplainer``
-     - Adaptive epsilon, more flexible
+     - Entropic coupling with adaptive epsilon
    * - Complex multimodal data
      - ``FlowExplainer``
      - Learns data distribution via normalizing flow
    * - Small sample / valid inference
      - ``Crossfitting``
      - Wraps any explainer with K-fold cross-fitting
-   * - Mixed data types
-     - ``EOTExplainer`` with Gower
-     - Use ``cost_metric="gower"``
    * - Any black-box model
      - ``OTExplainer``
      - Model-agnostic; needs only a ``f(X) -> y`` callable
@@ -73,19 +70,21 @@ OTExplainer (Gaussian OT)
 EOTExplainer (Entropic OT)
 --------------------------
 
-**Best for:** Non-Gaussian, multimodal, or mixed-type data
+**Best for:** A smoothed disentangling map when the Gaussian OT map is too rigid
 
 **Pros:**
 
-- Relaxes Gaussian assumption
+- Closed-form Gaussian entropic coupling, no iterative solver
 - Adaptive regularization (``auto_epsilon=True``)
-- Supports categorical features via Gower distance
-- Stochastic transport for variance reduction
+- Monte Carlo corrections keep null features at zero for valid inference
 
 **Cons:**
 
-- Slower than Gaussian OT
-- More hyperparameters to tune
+- Slower than Gaussian OT (``n_eta`` model evaluations per latent point)
+- Treats the whitened features as Gaussian
+- Importance shrinks with ``epsilon``: for standardized features the
+  attributed total is ``s^2`` times the latent total, with
+  ``s = (sqrt(epsilon^2 + 16) - epsilon) / 4``
 
 **Key options:**
 
@@ -96,20 +95,17 @@ EOTExplainer (Entropic OT)
    explainer = EOTExplainer(
        model.predict,
        data=X_background,
-       # Regularization
-       auto_epsilon=True,      # Auto-tune from median distance
-       epsilon=0.1,            # Manual epsilon (if auto_epsilon=False)
-       
-       # Transport target
-       target="gaussian",      # or "empirical"
-       
-       # Stochastic transport
-       stochastic_transport=True,
-       n_transport_samples=10,
-       
-       # Cost function for mixed data
-       cost_metric="sqeuclidean",  # or "gower", "auto"
+       epsilon=0.1,            # or auto_epsilon=True to choose it from the data
+       n_eta=10,               # coupling draws for the latent regression
+       method="cpi",           # or "loco" (integrated LOCO, squared error only)
+       nsamples=50,            # counterfactual replicates per feature
    )
+   results = explainer(X_test)
+
+With ``epsilon > 0`` the latent features are drawn from the coupling and the
+latent regression is the average of the model over ``n_eta`` backward draws.
+``method="loco"`` uses one joint draw per counterfactual replicate, so it needs
+``n_eta`` times fewer model evaluations than ``"cpi"``.
 
 FlowExplainer (Flow-Based DFI)
 ------------------------------
