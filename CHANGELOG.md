@@ -1,38 +1,5 @@
 # Changelog
 
-## [0.2.1] - 2026-10-23
-### Fixed
-- **CPI first-order bias**: with outcomes and the squared error, ``method='cpi'``
-  adds the orthogonalizing term ``(y - ŷ)(ŷ - E_b[ŷ_b])`` so that its expectation
-  no longer depends on the regression error at first order.
-- **Gaussian EOT coupling**: ``EOTExplainer`` used the scale ``sqrt(1+eps)/(1+eps/2)``,
-  which is not the entropic OT solution. The Gaussian coupling between
-  ``N(0, I)`` marginals with quadratic cost has cross-covariance
-  ``s = (sqrt(eps^2 + 16) - eps)/4`` and conditional variance ``1 - s^2``
-  (``fdfi.explainers.eot.gaussian_eot_scale``), so that ``Z`` has the ``N(0, I)``
-  marginal.
-- **Cross-fitting with EOT** now uses the same latent construction and baseline
-  as ``EOTExplainer.__call__``.
-
-### Added
-- ``EOTExplainer`` prints its ``latent``, ``eta``, ``n_eta`` and ``source`` settings.
-- ``EOTExplainer`` options ``latent`` (``'draw'`` from the coupling, default, or
-  ``'barycentric'``), ``eta`` (``'mc'`` kernel-averaged latent regression, default,
-  or ``'plugin'``), ``source`` (``'gaussian'`` or ``'empirical'`` semi-discrete
-  Sinkhorn potentials), and ``method='loco'`` (integrated LOCO with Monte Carlo
-  variance corrections), as analysed in the DFI paper revision.
-
-### Changed
-- Counterfactual evaluation draws the resampled latent coordinate and the
-  coupling noise jointly (one coupling draw per replicate) for the ``'loco'`` and
-  ``'scpi'`` scores, which estimates the same quantity with ``n_eta`` times fewer
-  model evaluations; ``'cpi'`` keeps ``n_eta`` draws per replicate.
-- **Migration:** ``EOTExplainer`` now defaults to ``method='loco'`` and randomized
-  latent draws; the previous behaviour corresponds to
-  ``EOTExplainer(..., latent='barycentric', eta='plugin', method='cpi')`` up to the
-  corrected scale. Scores computed with ``eps > 0`` change; at ``eps -> 0`` the
-  variants coincide.
-
 ## [0.2.0]
 ### Changed
 - **Result objects.** Calling an explainer now returns an `ExplanationResults`

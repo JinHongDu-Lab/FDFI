@@ -6,7 +6,6 @@ methods, plus shared inference (conf_int/summary/group_importance) and
 diagnostics logic used by all Explainer subclasses.
 """
 
-import warnings
 import numpy as np
 from typing import Optional, Union, Callable, Any, Tuple
 from scipy import stats
@@ -15,7 +14,7 @@ from ..utils import (
     compute_latent_independence,
     compute_mmd,
 )
-from ..losses import squared_error, resolve_loss
+from ..losses import resolve_loss
 from ..results import ConfIntResults
 
 
@@ -198,7 +197,6 @@ class Explainer:
         y_tilde_all: np.ndarray,
         method: str = "cpi",
         y_true: Optional[np.ndarray] = None,
-        base_var: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Per-feature uncentered EIF from counterfactual predictions.
@@ -209,14 +207,9 @@ class Explainer:
 
         - ``'cpi'`` (the normalized FDFI convention): apply the loss to each
           replicate, average the loss differences, and multiply by one half —
-          ``0.5 * E_b[L(r, ŷ_b) - L(r, ŷ)]``.  With outcomes and the squared
-          error the orthogonalizing term ``(y - ŷ)(ŷ - E_b[ŷ_b])`` is added,
-          which removes the first-order bias in the regression error.
+          ``0.5 * E_b[L(r, ŷ_b) - L(r, ŷ)]``.
         - ``'scpi'`` (Sobol-CPI): average the counterfactual predictions first,
           then apply the loss — ``L(r, E_b[ŷ_b]) - L(r, ŷ)``.
-        - ``'loco'`` (integrated LOCO, squared error only): ``'scpi'`` minus the
-          Monte Carlo correction ``Var_b[ŷ_b]/B``, which removes the O(1/B)
-          upward bias of the averaged counterfactual prediction.
 
         The factor one half makes CPI target the same population quantity as
         SCPI under squared loss, an exact disentangling map, and a Bayes
@@ -246,21 +239,15 @@ class Explainer:
         Parameters
         ----------
         y_pred : ndarray of shape (n,)
-            Baseline predictions ``ŷ``: the model at the observed inputs, or,
-            for explainers with a randomized latent representation, the fitted
-            latent regression ``eta_hat(Z)`` at the observed latent features.
+            Model predictions on the observed inputs (the baseline ``ŷ``).
         y_tilde_all : ndarray of shape (B, n)
             Counterfactual predictions for the ``B`` Monte-Carlo replicates of
             the perturbed feature.
-        method : {'cpi', 'scpi', 'loco'}, default='cpi'
+        method : {'cpi', 'scpi'}, default='cpi'
             Averaging order (see above).
         y_true : ndarray of shape (n,), optional
             True outcomes.  When omitted, the label-free divergence form above is
             used.
-        base_var : ndarray of shape (n,), optional
-            Monte Carlo variance of ``y_pred`` when the baseline itself is a
-            Monte Carlo average; ``'loco'`` subtracts it from the squared
-            baseline residual so that both sides of the difference are debiased.
 
         Returns
         -------
@@ -269,8 +256,8 @@ class Explainer:
         """
         loss = self._loss
         method = (method or "cpi").lower()
-        if method not in ("cpi", "scpi", "loco"):
-            raise ValueError(f"method must be 'cpi', 'scpi', or 'loco', got {method!r}")
+        if method not in ("cpi", "scpi"):
+            raise ValueError(f"method must be 'cpi' or 'scpi', got {method!r}")
 
         if y_true is None:
             # Label-free: reference is the model's own prediction; subtract the
@@ -285,33 +272,7 @@ class Explainer:
 
         if method == "cpi":
             perturbed = loss(ref[None, :], y_tilde_all).mean(axis=0)
-            score = 0.5 * (perturbed - base)
-            if y_true is not None and loss is squared_error:
-                # Orthogonalized CPI: the plain score has the first-order bias
-                # E[(eta_hat - eta_hat_{-j}) (eta - eta_hat)] in the regression
-                # error; adding (y - ŷ)(ŷ - mean_b ŷ_b) removes it so that the
-                # expectation matches the integrated LOCO estimand.
-                m = np.asarray(y_tilde_all, dtype=float).mean(axis=0)
-                score = score + (ref - np.asarray(y_pred)) * (np.asarray(y_pred) - m)
-            return score
-
-        if method == "loco":
-            if loss is squared_error:
-                # Integrated LOCO: (r - mean_b ŷ_b)^2 - s_b^2/B - [L(r, ŷ) - base_var],
-                # where the sample variance s_b^2 of the B counterfactual
-                # predictions removes the O(1/B) upward bias of the Monte Carlo
-                # mean and base_var does the same for a Monte Carlo baseline.
-                y_tilde_all = np.asarray(y_tilde_all, dtype=float)
-                B = y_tilde_all.shape[0]
-                m = y_tilde_all.mean(axis=0)
-                corr = y_tilde_all.var(axis=0, ddof=1) / B if B > 1 else 0.0
-                base_corr = 0.0 if base_var is None else np.asarray(base_var, dtype=float)
-                return (ref - m) ** 2 - corr - (base - base_corr)
-            warnings.warn(
-                "method='loco' is defined for the squared-error loss; falling back to 'scpi' "
-                "without the Monte Carlo correction for the supplied loss.",
-                RuntimeWarning,
-            )
+            return 0.5 * (perturbed - base)
 
         # Sobol-CPI estimates the restricted prediction by averaging the
         # counterfactual predictions before evaluating the loss.

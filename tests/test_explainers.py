@@ -62,8 +62,7 @@ class TestExplainer:
             explainer.shap_values(X)
 
     def test_cpi_matches_normalized_fdfi_formula(self):
-        """CPI is one half of the mean per-resample loss difference plus the
-        orthogonalizing term (y - ŷ)(ŷ - mean_b ŷ_b) for the squared error."""
+        """CPI is one half of the mean per-resample loss difference."""
         explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
         y_pred = np.array([0.0, 1.0, 2.0])
         y_true = np.array([1.0, 3.0, -1.0])
@@ -77,7 +76,6 @@ class TestExplainer:
         )
         base = (y_true - y_pred) ** 2
         expected = 0.5 * (((y_true[None, :] - y_tilde) ** 2).mean(axis=0) - base)
-        expected = expected + (y_true - y_pred) * (y_pred - y_tilde.mean(axis=0))
 
         assert np.allclose(actual, expected)
 
@@ -99,8 +97,7 @@ class TestExplainer:
         assert np.allclose(actual, expected)
 
     def test_l2_finite_resample_identity(self):
-        """For L2, 2*CPI = SCPI + the counterfactual prediction variance
-        + 2 (y - ŷ)(ŷ - mean_b ŷ_b), the orthogonalizing term carried by CPI."""
+        """For L2, 2*CPI = SCPI + the counterfactual prediction variance."""
         explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
         y_pred = np.array([0.0, 1.0, 2.0])
         y_true = np.array([1.0, 3.0, -1.0])
@@ -117,8 +114,7 @@ class TestExplainer:
             y_pred, y_tilde, method="scpi", y_true=y_true
         )
 
-        ortho = (y_true - y_pred) * (y_pred - y_tilde.mean(axis=0))
-        assert np.allclose(2.0 * cpi, scpi + y_tilde.var(axis=0) + 2.0 * ortho)
+        assert np.allclose(2.0 * cpi, scpi + y_tilde.var(axis=0))
 
 
 def generate_exp3_data(n=500, rho=0.8, seed=42):
@@ -227,10 +223,9 @@ class TestEOTExplainer:
         assert np.all(np.isfinite(results["phi_X"]))
         assert np.all(results["std_X"] >= 0)
 
-        rng = np.random.default_rng([explainer.random_state, 12])
-        Z = explainer._latent((X_test - explainer.mean) @ explainer.L_inv, rng)
-        y_pred, base_var = explainer._eta(Z, rng, return_var=True)
-        ueifs_Z = explainer._phi_Z(Z, y_pred, base_var=base_var)
+        Z = explainer.s_fwd * (X_test - explainer.mean) @ explainer.L_inv
+        y_pred = exp3_model(X_test)
+        ueifs_Z = explainer._phi_Z(Z, y_pred)
 
         ueifs_X = ueifs_Z @ (explainer.W ** 2).T
         phi_X = np.mean(ueifs_X, axis=0)

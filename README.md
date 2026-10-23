@@ -125,9 +125,8 @@ You can still override both methods explicitly if needed.
 
 ## EOT Options (Entropic OT)
 
-`EOTExplainer` supports a fixed or adaptive epsilon, a Gaussian or empirical
-source for the coupling, randomized or barycentric latent features, the
-integrated LOCO, SCPI, or CPI scores, and user-chosen losses:
+`EOTExplainer` supports a fixed or adaptive epsilon, three sampling methods,
+CPI or SCPI scores, and user-chosen losses:
 
 ```python
 from fdfi.explainers import EOTExplainer
@@ -136,11 +135,8 @@ explainer = EOTExplainer(
     model.predict,
     X_background,
     epsilon=0.1,                 # or auto_epsilon=True to choose epsilon from the data
-    source="gaussian",           # or 'empirical' (semi-discrete coupling of the background sample)
-    latent="draw",               # draw Z from the coupling, or 'barycentric'
-    eta="mc",                    # kernel-averaged latent regression, or 'plugin'
-    method="loco",               # 'loco' (default), 'scpi', or 'cpi'
     sampling_method="resample",  # 'resample', 'permutation', or 'normal'
+    method="cpi",                # 'cpi' or 'scpi'
     loss="squared_error",
 )
 results = explainer(X_test)

@@ -186,12 +186,8 @@ class Crossfitting(Explainer):
                     ueifs_Z = ueifs_cpi
                 ueifs_X = ueifs_Z @ H_sq.T
         elif isinstance(explainer, EOTExplainer):
-            # Same construction as EOTExplainer.__call__: latent draws from the
-            # fitted coupling and the fitted latent regression as baseline.
-            rng = np.random.default_rng([explainer.random_state, 12])
-            Z = explainer._latent((X_test - explainer.mean) @ explainer.L_inv, rng)
-            y_pred, base_var = explainer._eta(Z, rng, return_var=True)
-            ueifs_Z = explainer._phi_Z(Z, y_pred, y_true=y_test, base_var=base_var)
+            Z = explainer.s_fwd * (X_test - explainer.mean) @ explainer.L_inv
+            ueifs_Z = explainer._phi_Z(Z, y_pred, y_true=y_test)
             ueifs_X = ueifs_Z @ (explainer.W ** 2).T
         elif isinstance(explainer, OTExplainer):
             Z = (X_test - explainer.mean) @ explainer.L_inv
@@ -308,10 +304,11 @@ class Crossfitting(Explainer):
             )
             # Restrict resampling pool to training fold only.
             if hasattr(fold_exp, "s_fwd"):
-                # EOT: latent pool from the fitted coupling on the training fold
-                fold_exp.Z_full = fold_exp._latent(
-                    (self.data[train_idx] - fold_exp.mean) @ fold_exp.L_inv,
-                    np.random.default_rng([fold_exp.random_state, 11]),
+                # EOT: analytical forward map (scale * whitening)
+                fold_exp.Z_full = (
+                    fold_exp.s_fwd
+                    * (self.data[train_idx] - fold_exp.mean)
+                    @ fold_exp.L_inv
                 )
             elif hasattr(fold_exp, "_encode_to_Z"):
                 # FlowExplainer: encode training-fold samples through the flow.
