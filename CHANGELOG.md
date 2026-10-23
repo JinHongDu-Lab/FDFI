@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.1] - 2026-10-23
 ### Fixed
 - **CPI first-order bias**: with outcomes and the squared error, ``method='cpi'``
   adds the orthogonalizing term ``(y - ŷ)(ŷ - E_b[ŷ_b])`` so that its expectation

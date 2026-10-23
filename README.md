@@ -10,7 +10,7 @@ A Python library for computing feature importance using disentangled methods, in
 
 📖 **[Read the documentation](https://fdfi.readthedocs.io/en/latest/)**
 
-Current development version: `0.2.0`
+Current development version: `0.2.1`
 
 ## Overview
 
