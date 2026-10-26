@@ -15,7 +15,7 @@ from ..utils import (
     compute_mmd,
 )
 from ..losses import brier, resolve_loss, squared_error
-from ..results import ConfIntResults
+from ..results import ConfIntResults, ExplanationResults
 
 
 class Explainer:
@@ -125,6 +125,38 @@ class Explainer:
         self._last_n = n
 
     # ------------------------------------------------------------------
+    # Gaussian geometry (OTExplainer, EOTExplainer)
+    # ------------------------------------------------------------------
+    def _whiten(self, data: np.ndarray) -> None:
+        """Fit the Gaussian whitening of ``data``: ``mean``, ``cov``,
+        ``L = cov^{1/2}`` and ``L_inv``, with the eigenvalues of ``cov`` clipped
+        below at ``regularize``."""
+        self.mean = np.mean(data, axis=0, keepdims=True)
+        cov = np.cov(data, rowvar=False, ddof=0)
+        self.cov = (cov + cov.T) / 2
+        eigenvals, eigenvecs = np.linalg.eigh(self.cov)
+        eigenvals = np.maximum(eigenvals, self.regularize)
+        self.L = (eigenvecs * eigenvals ** 0.5) @ eigenvecs.T
+        self.L_inv = (eigenvecs * eigenvals ** -0.5) @ eigenvecs.T
+
+    def _explain(self, X: np.ndarray, y: Optional[np.ndarray]) -> ExplanationResults:
+        """Shared ``__call__`` of the Gaussian-geometry explainers."""
+        ueifs_X, ueifs_Z = self._ueifs(X, y)
+        self.ueifs_X, self.ueifs_Z = ueifs_X, ueifs_Z
+        n = X.shape[0]
+        ddof = 1 if n > 1 else 0
+        results = {
+            "phi_X": np.mean(ueifs_X, axis=0),
+            "std_X": np.std(ueifs_X, axis=0),
+            "se_X": np.std(ueifs_X, axis=0, ddof=ddof) / np.sqrt(n),
+            "phi_Z": np.mean(ueifs_Z, axis=0),
+            "std_Z": np.std(ueifs_Z, axis=0),
+            "se_Z": np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n),
+        }
+        self._cache_results(results, n)
+        return ExplanationResults(results, explainer_name=type(self).__name__, n=n)
+
+    # ------------------------------------------------------------------
     # Printing
     # ------------------------------------------------------------------
     #: Attributes shown in the printed representation when present.
@@ -198,6 +230,7 @@ class Explainer:
         method: str = "cpi",
         y_true: Optional[np.ndarray] = None,
         base_var: Optional[np.ndarray] = None,
+        rep_var: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Per-feature uncentered EIF from counterfactual predictions.
@@ -213,13 +246,12 @@ class Explainer:
           which removes the first-order bias in the regression error.
         - ``'scpi'`` (Sobol-CPI): average the counterfactual predictions first,
           then apply the loss — ``L(r, E_b[ŷ_b]) - L(r, ŷ)``.
-        - ``'loco'`` (integrated LOCO, squared error only): ``'scpi'`` minus the
-          Monte Carlo variance ``Var_b[ŷ_b] / B`` of the averaged
-          counterfactual prediction.
 
-        When the baseline ``ŷ`` is itself a Monte Carlo average (the EOT latent
-        regression), ``base_var`` is its Monte Carlo variance, and ``'cpi'`` and
-        ``'loco'`` remove the bias it causes under the squared error.  The
+        When the baseline ``ŷ`` and the replicates ``ŷ_b`` are Monte Carlo
+        averages (the EOT latent regression), ``base_var`` and ``rep_var`` are
+        their Monte Carlo variances, and ``'cpi'`` removes the bias they cause
+        under the squared error; without ``rep_var`` the replicates are taken
+        to have the baseline's variance on average.  The
         squared error is recognized as the built-in ``squared_error`` or
         ``brier`` loss.
 
@@ -256,13 +288,15 @@ class Explainer:
         y_tilde_all : ndarray of shape (B, n)
             Counterfactual predictions for the ``B`` Monte-Carlo replicates of
             the perturbed feature.
-        method : {'cpi', 'scpi', 'loco'}, default='cpi'
+        method : {'cpi', 'scpi'}, default='cpi'
             Averaging order (see above).
         y_true : ndarray of shape (n,), optional
             True outcomes.  When omitted, the label-free divergence form above is
             used.
         base_var : ndarray of shape (n,), optional
             Monte Carlo variance of ``y_pred``; None when ``y_pred`` is exact.
+        rep_var : ndarray of shape (B, n), optional
+            Monte Carlo variance of each counterfactual prediction (``'cpi'``).
 
         Returns
         -------
@@ -271,11 +305,9 @@ class Explainer:
         """
         loss = self._loss
         method = (method or "cpi").lower()
-        if method not in ("cpi", "scpi", "loco"):
-            raise ValueError(f"method must be 'cpi', 'scpi', or 'loco', got {method!r}")
+        if method not in ("cpi", "scpi"):
+            raise ValueError(f"method must be 'cpi' or 'scpi', got {method!r}")
         squared = loss in (squared_error, brier)
-        if method == "loco" and not squared:
-            raise ValueError("method='loco' is defined for the squared-error loss only.")
 
         if y_true is None:
             # Label-free: reference is the model's own prediction; subtract the
@@ -295,30 +327,21 @@ class Explainer:
 
         if method == "cpi":
             perturbed = loss(ref[None, :], y_tilde_all).mean(axis=0)
+            if squared:
+                # Each squared replicate loss carries the replicate's Monte
+                # Carlo variance.
+                perturbed = perturbed - (v0 if rep_var is None else rep_var.mean(axis=0))
             score = 0.5 * (perturbed - base)
             if squared and y_true is not None:
                 # Orthogonalized CPI: (y - ŷ)(ŷ - mean_b ŷ_b) removes the
                 # first-order bias in the regression error, so the expectation
-                # matches the integrated LOCO estimand.  The Monte Carlo noise
-                # of ŷ enters this product with coefficient -1, hence + v0.
-                score = score + (ref - y_pred) * (y_pred - m) + v0
+                # matches the SCPI estimand.  The Monte Carlo noise of ŷ enters
+                # -0.5 (y - ŷ)^2 and this product, hence + 1.5 v0.
+                score = score + (ref - y_pred) * (y_pred - m) + 1.5 * v0
             elif squared:
-                # 0.5 (ŷ - ŷ_b)^2 carries half the Monte Carlo variances of ŷ
-                # and ŷ_b, which agree on average.
-                score = score - v0
+                # 0.5 (ŷ - ŷ_b)^2 also carries half the variance of ŷ.
+                score = score - 0.5 * v0
             return score
-
-        if method == "loco":
-            B = y_tilde_all.shape[0]
-            if B < 2:
-                raise ValueError("method='loco' needs at least two counterfactual replicates.")
-            # Integrated LOCO: the sample variance of the B replicates removes
-            # the Monte Carlo variance of their mean, and v0 that of ŷ, which
-            # enters as the reference (label-free) or the baseline loss.
-            corr = y_tilde_all.var(axis=0, ddof=1) / B
-            if y_true is None:
-                return (ref - m) ** 2 - corr - v0
-            return (ref - m) ** 2 - corr - (base - v0)
 
         # Sobol-CPI estimates the restricted prediction by averaging the
         # counterfactual predictions before evaluating the loss.

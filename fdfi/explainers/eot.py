@@ -9,6 +9,7 @@ import numpy as np
 from typing import Optional, Callable, Any, Tuple
 from scipy.spatial.distance import pdist
 from .base import Explainer
+from ..losses import brier, squared_error
 from ..results import ExplanationResults
 
 
@@ -46,20 +47,26 @@ class EOTExplainer(Explainer):
     :func:`gaussian_eot_scale`).
 
     Latent features are drawn from the forward conditional, and the latent
-    regression ``eta(z) = E[f(X) | Z = z]`` is the average of the model over
-    ``n_eta`` draws from the backward conditional.  Counterfactuals replace
+    regression ``eta(z) = E[f(X) | Z = z]`` is a Monte Carlo average of the
+    model over draws from the backward conditional.  Counterfactuals replace
     ``Z_j`` by draws from its marginal and are scored by ``method``:
 
-    - ``'cpi'``: one half the average per-replicate loss difference, each
-      replicate evaluated with ``n_eta`` coupling draws.
-    - ``'loco'``: integrated LOCO (squared error only).  Each replicate uses a
-      single joint draw of ``Z_j`` and the coupling noise, so a feature costs
-      ``nsamples`` model evaluations per point instead of
-      ``nsamples * n_eta``.
+    - ``'cpi'``: one half the average per-replicate loss difference.  The
+      baseline averages ``n_eta`` coupling draws.  For the squared error each
+      replicate uses two draws, whose difference estimates its Monte Carlo
+      variance, and the Monte Carlo bias is removed (see
+      :meth:`Explainer._ueif_from_counterfactuals`); a feature costs
+      ``2 * nsamples`` model evaluations per point.  Other losses use
+      ``n_eta`` draws per replicate, so that the noise of the baseline and the
+      replicates matches.
+    - ``'scpi'``: the loss at the averaged counterfactual prediction minus the
+      baseline loss.  Each replicate uses one joint draw of ``Z_j`` and the
+      coupling noise, and the baseline averages the model over the same
+      coupling draws without replacing ``Z_j``, so their noise cancels in the
+      score up to an ``O(1/nsamples)`` bias.  A feature costs ``nsamples``
+      model evaluations per point.
 
-    For the squared error both scores remove the Monte Carlo bias of the
-    averaged baseline and counterfactual predictions (see
-    :meth:`Explainer._ueif_from_counterfactuals`).  Each coupling draw's noise
+    Each coupling draw's noise
     is shared across features, which leaves every feature's score and the
     per-sample standard errors unchanged in distribution and avoids
     recomputing the ``d x d`` noise transform per feature.
@@ -90,11 +97,11 @@ class EOTExplainer(Explainer):
         - 'normal': sample from N(0, 1)
     random_state : int, default=0
         Random seed for reproducibility.
-    method : {'cpi', 'loco'}, default='cpi'
+    method : {'cpi', 'scpi'}, default='cpi'
         Importance estimator (see above).
     n_eta : int, default=10
-        Coupling draws for the Monte Carlo average ``eta``; at least 2 so that
-        its Monte Carlo variance can be estimated.
+        Coupling draws for the baseline ``eta`` of ``'cpi'``; at least 2 so
+        that its Monte Carlo variance can be estimated.
     n_jobs : int, default=1
         Number of features scored in parallel threads; -1 uses all CPUs.
         Each thread holds a few arrays of ``nsamples * n_test * d`` floats,
@@ -122,8 +129,8 @@ class EOTExplainer(Explainer):
     ):
         super().__init__(model, data, fit_flow=False, **kwargs)
         self.method = str(method).lower()
-        if self.method not in ("cpi", "loco"):
-            raise ValueError(f"method must be 'cpi' or 'loco', got {method!r}")
+        if self.method not in ("cpi", "scpi"):
+            raise ValueError(f"method must be 'cpi' or 'scpi', got {method!r}")
         if n_eta < 2:
             raise ValueError(f"n_eta must be at least 2, got {n_eta}")
         self.nsamples = nsamples
@@ -136,16 +143,7 @@ class EOTExplainer(Explainer):
         self.regularize = kwargs.get("regularize", 1e-6)
 
         # ── Gaussian whitening ───────────────────────────────────────────
-        self.mean = np.mean(data, axis=0, keepdims=True)
-        self.cov = np.cov(data - self.mean, rowvar=False, ddof=0)
-        self.cov = (self.cov + self.cov.T) / 2
-
-        eigenvals, eigenvecs = np.linalg.eigh(self.cov)
-        eigenvals = np.maximum(eigenvals, self.regularize)
-
-        self.L = eigenvecs @ np.diag(eigenvals**0.5) @ eigenvecs.T
-        self.L_inv = eigenvecs @ np.diag(eigenvals**-0.5) @ eigenvecs.T
-
+        self._whiten(data)
         X_centered = data - self.mean
         X_whitened = X_centered @ self.L_inv
 
@@ -210,24 +208,7 @@ class EOTExplainer(Explainer):
             Z-space, with attribute access, ``importance()``, ``to_frame()``
             and ``top_features()``.
         """
-        n = X.shape[0]
-        ueifs_X, ueifs_Z = self._ueifs(X, y)
-
-        # Store per-sample UEIFs for group_importance()
-        self.ueifs_X = ueifs_X
-        self.ueifs_Z = ueifs_Z
-
-        ddof = 1 if n > 1 else 0
-        results = {
-            "phi_X": np.mean(ueifs_X, axis=0),
-            "std_X": np.std(ueifs_X, axis=0),
-            "se_X": np.std(ueifs_X, axis=0, ddof=ddof) / np.sqrt(n),
-            "phi_Z": np.mean(ueifs_Z, axis=0),
-            "std_Z": np.std(ueifs_Z, axis=0),
-            "se_Z": np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n),
-        }
-        self._cache_results(results, n)
-        return ExplanationResults(results, explainer_name=type(self).__name__, n=n)
+        return self._explain(X, y)
 
     def _ueifs(
         self, X: np.ndarray, y: Optional[np.ndarray] = None
@@ -240,40 +221,51 @@ class EOTExplainer(Explainer):
         """
         rng = np.random.default_rng([self.random_state, 12])
         Z = self._latent((X - self.mean) @ self.L_inv, rng)
-        y_pred, base_var = self._eta(Z, rng, self.n_eta)
-        ueifs_Z = self._phi_Z(Z, y_pred, y_true=y, base_var=base_var)
+        ueifs_Z = self._phi_Z(Z, rng, y_true=y)
         return ueifs_Z @ (self.W ** 2).T, ueifs_Z
 
     def _phi_Z(
         self,
         Z: np.ndarray,
-        y_pred: np.ndarray,
+        rng: np.random.Generator,
         y_true: Optional[np.ndarray] = None,
-        base_var: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Per-sample uncentered UEIF in latent space.
 
         For each feature ``j`` the latent coordinate is replaced by
-        independent draws, ``eta`` is evaluated at the counterfactuals, and the
-        result is scored by ``self.method`` (see
+        independent draws, the model is evaluated at the counterfactuals, and
+        the result is scored by ``self.method`` (see
         :meth:`Explainer._ueif_from_counterfactuals`).
+
+        - ``'cpi'``: the baseline is ``eta(Z)`` from ``n_eta`` coupling draws.
+          Each replicate uses two coupling draws for the squared error, whose
+          difference estimates and removes its Monte Carlo variance, and
+          ``n_eta`` draws for other losses, matching the baseline.
+        - ``'scpi'``: each replicate uses one coupling draw, and the baseline
+          averages the model over the same draws without replacing ``Z_j``,
+          so their Monte Carlo noise cancels in the score.
 
         Parameters
         ----------
         Z : (n, d) array
             Latent features.
-        y_pred : (n,) array
-            Baseline predictions ``eta(Z)``.
+        rng : numpy.random.Generator
+            Generator for the baseline's coupling draws.
         y_true : (n,) array or None
             Outcomes.  When provided, the loss-difference (DFI) form is used;
             when omitted, the label-free divergence form.
-        base_var : (n,) array or None
-            Monte Carlo variance of ``y_pred``; None when ``y_pred`` is exact.
         """
         n, d = Z.shape
         B = self.nsamples
+        noisy = self.sigma_fwd > 0
+        coupled = self.method == "scpi" and noisy
+        y_pred = base_var = None
+        if not coupled:
+            y_pred, base_var = self._eta(Z, rng, self.n_eta)
         # A deterministic coupling needs a single draw.
-        n_draws = self.n_eta if self.method == "cpi" and self.sigma_fwd > 0 else 1
+        n_draws = 1
+        if self.method == "cpi" and noisy:
+            n_draws = 2 if self._loss in (squared_error, brier) else self.n_eta
 
         def shift(j: int) -> np.ndarray:
             """``Z~_j - Z_j`` for the B replicates, flattened; seeded per feature."""
@@ -295,13 +287,16 @@ class EOTExplainer(Explainer):
         # replicates and points), so the d x d product runs once per draw.
         X_obs = np.tile(Z @ self.W + self.mean, (B, 1))
         sums = np.zeros((d, B * n))
+        sumsq = np.zeros((d, B * n)) if n_draws == 2 else None
         n_jobs = (os.cpu_count() or 1) if self.n_jobs == -1 else max(int(self.n_jobs), 1)
         with ThreadPoolExecutor(max_workers=min(n_jobs, d)) as pool:
             for k in range(n_draws):
                 X_k = X_obs
-                if self.sigma_fwd > 0:
-                    rng = np.random.default_rng([self.random_state, 14, k])
-                    X_k = X_obs + self.sigma_fwd * rng.standard_normal(X_obs.shape) @ self.L
+                if noisy:
+                    draw = np.random.default_rng([self.random_state, 14, k])
+                    X_k = X_obs + self.sigma_fwd * draw.standard_normal(X_obs.shape) @ self.L
+                if coupled:
+                    y_pred = np.asarray(self.model(X_k), dtype=float).reshape(B, n).mean(axis=0)
 
                 def predict(j: int, X_k: np.ndarray = X_k) -> np.ndarray:
                     X = X_k + np.outer(shift(j), self.W[j])
@@ -309,7 +304,11 @@ class EOTExplainer(Explainer):
 
                 for j, f in enumerate(pool.map(predict, range(d))):
                     sums[j] += f
+                    if sumsq is not None:
+                        sumsq[j] += f * f
 
+        # Monte Carlo variance of each replicate's two-draw mean, (f1 - f2)^2 / 4.
+        rep_var = None if sumsq is None else (2 * sumsq - sums ** 2) / 4
         return np.column_stack([
             self._ueif_from_counterfactuals(
                 y_pred,
@@ -317,6 +316,7 @@ class EOTExplainer(Explainer):
                 method=self.method,
                 y_true=y_true,
                 base_var=base_var,
+                rep_var=None if rep_var is None else rep_var[j].reshape(B, n),
             )
             for j in range(d)
         ])

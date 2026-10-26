@@ -139,7 +139,7 @@ Entropic Optimal Transport (EOTExplainer)
 
 The ``EOTExplainer`` couples the whitened features with ``N(0, I)`` by the
 closed-form Gaussian entropic OT coupling.  It supports a fixed or adaptive
-epsilon and the CPI or integrated LOCO scores.
+epsilon and the CPI or SCPI scores.
 
 .. autoclass:: fdfi.explainers.EOTExplainer
    :members:
@@ -157,7 +157,7 @@ epsilon and the CPI or integrated LOCO scores.
        X_background,
        auto_epsilon=True,           # Adaptive regularization
        n_eta=10,                    # Coupling draws for the latent regression
-       method="loco",               # Integrated LOCO (squared error only)
+       method="scpi",               # One coupling draw per replicate
    )
    results = explainer(X_test)
 

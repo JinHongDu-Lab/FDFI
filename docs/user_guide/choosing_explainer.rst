@@ -80,7 +80,7 @@ EOTExplainer (Entropic OT)
 
 **Cons:**
 
-- Slower than Gaussian OT (``n_eta`` model evaluations per latent point)
+- Slower than Gaussian OT (several coupling draws per latent point)
 - Treats the whitened features as Gaussian
 - Importance shrinks with ``epsilon``: for standardized features the
   attributed total is ``s^2`` times the latent total, with
@@ -97,15 +97,17 @@ EOTExplainer (Entropic OT)
        data=X_background,
        epsilon=0.1,            # or auto_epsilon=True to choose it from the data
        n_eta=10,               # coupling draws for the latent regression
-       method="cpi",           # or "loco" (integrated LOCO, squared error only)
+       method="cpi",           # or "scpi"
        nsamples=50,            # counterfactual replicates per feature
    )
    results = explainer(X_test)
 
 With ``epsilon > 0`` the latent features are drawn from the coupling and the
-latent regression is the average of the model over ``n_eta`` backward draws.
-``method="loco"`` uses one joint draw per counterfactual replicate, so it needs
-``n_eta`` times fewer model evaluations than ``"cpi"``.
+latent regression is a Monte Carlo average of the model over backward draws.
+For the squared error, ``method="cpi"`` uses two draws per counterfactual
+replicate and removes the resulting Monte Carlo bias; for other losses it uses
+``n_eta`` draws.  ``method="scpi"`` uses one draw per replicate and evaluates
+the baseline on the same draws, which leaves an ``O(1/nsamples)`` bias.
 
 FlowExplainer (Flow-Based DFI)
 ------------------------------

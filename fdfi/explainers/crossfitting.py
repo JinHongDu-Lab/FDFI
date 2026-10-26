@@ -149,8 +149,6 @@ class Crossfitting(Explainer):
         ueifs_X : numpy.ndarray, shape (n_test, d)
         ueifs_Z : numpy.ndarray, shape (n_test, d)
         """
-        y_pred = explainer.model(X_test)
-
         if isinstance(explainer, FlowExplainer):
             Z = explainer._encode_to_Z(X_test)
             X_hat = explainer._decode_to_X(Z)
@@ -185,13 +183,8 @@ class Crossfitting(Explainer):
                 else:
                     ueifs_Z = ueifs_cpi
                 ueifs_X = ueifs_Z @ H_sq.T
-        elif isinstance(explainer, EOTExplainer):
+        elif isinstance(explainer, (EOTExplainer, OTExplainer)):
             ueifs_X, ueifs_Z = explainer._ueifs(X_test, y_test)
-        elif isinstance(explainer, OTExplainer):
-            Z = (X_test - explainer.mean) @ explainer.L_inv
-            ueifs_Z = explainer._phi_Z(Z, y_pred, y_true=y_test)
-            H = explainer.L ** 2
-            ueifs_X = ueifs_Z @ H.T
         else:
             # Fallback: call the explainer and replicate aggregated scores
             results = explainer(X_test)
@@ -264,6 +257,9 @@ class Crossfitting(Explainer):
 
         _split_kw = {"y": self.y, "groups": self.groups}
         _split_kw.update(self.cv_kwargs)
+        # Each fold draws its own counterfactuals and coupling noise; a shared
+        # seed would give rows in different folds identical draws.
+        seeds = np.random.SeedSequence(self.random_state)
         for train_idx, test_idx in self.cv_.split(self.data, **_split_kw):
             self.fold_indices.append((train_idx, test_idx))
 
@@ -297,7 +293,7 @@ class Crossfitting(Explainer):
             fold_exp = self.explainer_class(
                 model=fold_model,
                 data=self.data,
-                random_state=self.random_state,
+                random_state=int(seeds.spawn(1)[0].generate_state(1)[0]),
                 **fold_kwargs,
             )
             # Restrict resampling pool to training fold only.

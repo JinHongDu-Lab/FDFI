@@ -165,17 +165,18 @@ How can I speed up explanation?
       explainer = OTExplainer(model, data=X_bg)
 
 3. **Use a cheaper explainer**: ``OTExplainer`` has a closed-form transport map
-   and is substantially faster than ``EOTExplainer`` (``n_eta`` coupling draws
-   per evaluation) or ``FlowExplainer`` (flow training).
+   and is faster than ``EOTExplainer`` (several coupling draws per
+   evaluation) or ``FlowExplainer`` (flow training).
 
 Why is EOTExplainer slower than OTExplainer?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Both use closed-form Gaussian maps, but the entropic coupling is random:
-EOTExplainer averages the model over ``n_eta`` draws from the coupling for each
-latent point, so ``method="cpi"`` costs about ``n_eta`` times as many model
-evaluations as OTExplainer.  ``method="loco"`` uses one draw per counterfactual
-replicate and costs about the same as OTExplainer.
+Both use closed-form Gaussian maps, but the entropic coupling is random, so
+EOTExplainer averages the model over draws from the coupling.  For the squared
+error ``method="cpi"`` costs about twice as many model evaluations as
+OTExplainer, and ``n_eta`` times as many for other losses.
+``method="scpi"`` uses one draw per counterfactual replicate and costs about
+the same as OTExplainer.
 
 Troubleshooting
 ---------------

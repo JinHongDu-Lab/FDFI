@@ -3,7 +3,7 @@ Optimal-transport (Gaussian) DFI explainer.
 """
 
 import numpy as np
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Tuple
 from .base import Explainer
 from ..results import ExplanationResults
 
@@ -129,21 +129,7 @@ class OTExplainer(Explainer):
         self.random_state = random_state if random_state is not None else 0
         self.method = method
 
-       
-        self.mean = np.mean(data, axis=0, keepdims=True)
-        
-        self.cov = np.cov(data, rowvar=False, ddof=0)
-        self.cov = (self.cov + self.cov.T) / 2  
-
-      
-        eigenvals, eigenvecs = np.linalg.eigh(self.cov)
-        eigenvals = np.maximum(eigenvals, self.regularize) 
-
-        
-        self.L = eigenvecs @ np.diag(eigenvals**0.5) @ eigenvecs.T
-       
-        self.L_inv = eigenvecs @ np.diag(eigenvals**-0.5) @ eigenvecs.T
-
+        self._whiten(data)
         self.Z_full = (data - self.mean) @ self.L_inv
         self._compute_diagnostics(report_title="OTExplainer")
 
@@ -168,47 +154,17 @@ class OTExplainer(Explainer):
             Z-space, with attribute access, ``importance()``, ``to_frame()``
             and ``top_features()``.
         """
-       
-        n, d = X.shape
+        return self._explain(X, y)
+
+    def _ueifs(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Per-sample UEIFs ``(ueifs_X, ueifs_Z)`` for ``X``; shared with
+        :class:`Crossfitting`."""
         Z = (X - self.mean) @ self.L_inv
-        
-    
-        y_pred = self.model(X)
-        
-       
-        # get per-sample UEIFs in latent space (n_samples, n_features)
+        y_pred = np.asarray(self.model(X), dtype=float)
         ueifs_Z = self._phi_Z(Z, y_pred, y_true=y)
-
-        # Jacobian sensitivity matrix (constant for linear mapping)
-        H = self.L ** 2
-        # Map latent-space UEIFs back to original X-space per-sample
-        ueifs_X = ueifs_Z @ H.T
-
-        # Store per-sample UEIFs for group_importance()
-        self.ueifs_X = ueifs_X
-        self.ueifs_Z = ueifs_Z
-
-        # Aggregate to get mean importance and uncertainty (std) across samples
-        n = ueifs_X.shape[0]
-        ddof = 1 if n > 1 else 0
-        phi_X = np.mean(ueifs_X, axis=0)
-        std_X = np.std(ueifs_X, axis=0)
-        se_X = np.std(ueifs_X, axis=0, ddof=ddof) / np.sqrt(n)
-
-        phi_Z = np.mean(ueifs_Z, axis=0)
-        std_Z = np.std(ueifs_Z, axis=0)
-        se_Z = np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n)
-
-        results = {
-            "phi_X": phi_X,
-            "std_X": std_X,
-            "se_X": se_X,
-            "phi_Z": phi_Z,
-            "std_Z": std_Z,
-            "se_Z": se_Z,
-        }
-        self._cache_results(results, n)
-        return ExplanationResults(results, explainer_name=type(self).__name__, n=n)
+        return ueifs_Z @ (self.L ** 2).T, ueifs_Z
 
     def _phi_Z(
         self,

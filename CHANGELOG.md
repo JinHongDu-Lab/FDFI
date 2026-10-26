@@ -21,25 +21,33 @@
   cluster. With negative scores the floor is now the magnitude of the most
   negative score, and the margin is clipped at zero, as for the
   ``'mixture'`` rule.
+- **Crossfitting draws per fold**: every fold explainer received the same
+  ``random_state``, so ``EOTExplainer`` gave rows in different folds identical
+  coupling noise and counterfactual draws, and the standard errors were too
+  small.  Each fold now draws from its own seed, spawned from
+  ``random_state``.
 - The FAQ described Gower-distance options for ``EOTExplainer`` that do not
   exist, and the user guide and API page listed nonexistent ``target``,
   ``stochastic_transport`` and ``cost_metric`` options.
 
 ### Added
-- ``EOTExplainer(method='loco')``: integrated LOCO for the squared error, with
-  one joint draw of the latent coordinate and coupling noise per replicate.
-  For the squared error, ``'cpi'`` and ``'loco'`` remove the Monte Carlo bias
-  of the averaged baseline and counterfactual predictions.
-- ``EOTExplainer(n_eta=10)``: coupling draws for the latent regression.
+- ``EOTExplainer(n_eta=10)``: coupling draws for the CPI baseline.  For the
+  squared error, ``method='cpi'`` uses two coupling draws per counterfactual
+  replicate and removes the Monte Carlo bias of the baseline and the
+  replicates; other losses use ``n_eta`` draws per replicate.
 - ``EOTExplainer(n_jobs=1)``: features scored in parallel threads, with
   results independent of ``n_jobs``. It speeds up models that predict on a
   single core; models that already use all cores gain little.
 
 ### Changed
-- **Migration:** ``EOTExplainer`` no longer accepts ``method='scpi'``. EOT
-  scores computed with ``epsilon > 0`` change; at ``epsilon = 0`` the coupling
-  is the Gaussian OT map. Attributed importance follows the barycentric
-  projection, so for standardized features ``sum(phi_X) = s^2 * sum(phi_Z)``.
+- **Migration:** EOT scores computed with ``epsilon > 0`` change; at
+  ``epsilon = 0`` the coupling is the Gaussian OT map. Attributed importance
+  follows the barycentric projection, so for standardized features
+  ``sum(phi_X) = s^2 * sum(phi_Z)``.
+- ``EOTExplainer(method='scpi')`` uses one joint draw of the latent coordinate
+  and coupling noise per counterfactual replicate, and evaluates the baseline
+  on the same coupling draws, so their noise cancels up to an
+  ``O(1/nsamples)`` bias.
 
 ## [0.2.0]
 ### Changed

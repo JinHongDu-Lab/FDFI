@@ -1,7 +1,6 @@
 """
 Tests for the Gaussian EOT coupling, latent draws, and the Monte Carlo
-corrections of the CPI and integrated LOCO scores in
-:mod:`fdfi.explainers.eot`.
+correction of the CPI score in :mod:`fdfi.explainers.eot`.
 """
 
 import numpy as np
@@ -54,7 +53,7 @@ class TestCoupling:
         expected_var = (1 - explainer.s_fwd ** 2) * np.sum((explainer.L @ beta) ** 2) / 400
         assert np.mean(var) == pytest.approx(expected_var, rel=0.1)
 
-    @pytest.mark.parametrize("method", ["cpi", "loco"])
+    @pytest.mark.parametrize("method", ["cpi", "scpi"])
     def test_results_do_not_depend_on_n_jobs(self, method):
         rng = np.random.default_rng(0)
         X = rng.standard_normal((300, 5))
@@ -68,13 +67,14 @@ class TestCoupling:
 
     def test_options_are_validated(self):
         X = np.random.default_rng(0).standard_normal((50, 2))
-        assert EOTExplainer(lambda x: x[:, 0], X, method="LOCO").method == "loco"
+        assert EOTExplainer(lambda x: x[:, 0], X, method="SCPI").method == "scpi"
         with pytest.raises(ValueError):
-            EOTExplainer(lambda x: x[:, 0], X, method="scpi")
+            EOTExplainer(lambda x: x[:, 0], X, method="loco")
         with pytest.raises(ValueError):
             EOTExplainer(lambda x: x[:, 0], X, n_eta=1)
-        with pytest.raises(ValueError, match="squared-error"):
-            EOTExplainer(lambda x: x[:, 0], X, method="loco", loss="l1", nsamples=2)(X)
+        ex = EOTExplainer(lambda x: x[:, 0], X, method="scpi", loss="l1", nsamples=2)
+        res = ex(X)
+        assert np.all(np.isfinite(res["phi_Z"]))
 
 
 class TestMonteCarloCorrections:
@@ -87,7 +87,7 @@ class TestMonteCarloCorrections:
         y = X[:, 0] + rng.standard_normal(X.shape[0])
         return X, y
 
-    @pytest.mark.parametrize("method", ["cpi", "loco"])
+    @pytest.mark.parametrize("method", ["cpi", "scpi"])
     @pytest.mark.parametrize("labelled", [True, False])
     def test_null_features_are_unbiased(self, data, method, labelled):
         X, y = data
@@ -96,22 +96,32 @@ class TestMonteCarloCorrections:
             method=method, random_state=1, compute_diagnostics=False,
         )
         res = explainer(X, y if labelled else None)
-        # Without the corrections the null features are off by about
-        # +-(1 - s^2) / n_eta = 0.04 or twice that.
+        # Without the corrections (CPI) or the shared coupling draws (SCPI)
+        # the null features are off by a multiple of (1 - s^2) / n_eta = 0.04.
         assert np.all(np.abs(res["phi_Z"][1:]) < 0.01)
         s2 = explainer.s_fwd ** 2
         assert res["phi_Z"][0] == pytest.approx(s2, abs=0.06)
 
-    def test_loco_scoring_removes_counterfactual_monte_carlo_bias(self):
+    @pytest.mark.parametrize("labelled", [True, False])
+    def test_cpi_removes_replicate_monte_carlo_variance(self, labelled):
+        rng = np.random.default_rng(0)
+        explainer = EOTExplainer(lambda x: x[:, 0], rng.standard_normal((50, 2)), nsamples=2)
+        n, B = 200000, 5
+        y = rng.standard_normal(n) if labelled else None
+        y_tilde = rng.standard_normal((B, n))      # null feature, variance 1
+        cpi = explainer._ueif_from_counterfactuals(
+            np.zeros(n), y_tilde, method="cpi", y_true=y, rep_var=np.ones((B, n))
+        )
+        assert abs(cpi.mean()) < 0.01
+
+    def test_scpi_keeps_counterfactual_monte_carlo_bias(self):
         rng = np.random.default_rng(0)
         explainer = EOTExplainer(lambda x: x[:, 0], rng.standard_normal((50, 2)), nsamples=2)
         n, B = 200000, 5
         y = rng.standard_normal(n)
         y_pred = np.zeros(n)
         y_tilde = rng.standard_normal((B, n))
-        loco = explainer._ueif_from_counterfactuals(y_pred, y_tilde, method="loco", y_true=y)
         scpi = explainer._ueif_from_counterfactuals(y_pred, y_tilde, method="scpi", y_true=y)
-        assert abs(loco.mean()) < 0.02
         assert abs(scpi.mean() - 1.0 / B) < 0.02
 
 
@@ -126,7 +136,7 @@ class TestAttribution:
         y = X @ beta + rng.standard_normal(X.shape[0])
         eps = 0.5
         explainer = EOTExplainer(
-            lambda x: x @ beta, X_bg, epsilon=eps, nsamples=30, method="loco", random_state=2,
+            lambda x: x @ beta, X_bg, epsilon=eps, nsamples=30, random_state=2,
         )
         res = explainer(X, y)
         s = gaussian_eot_scale(eps)
@@ -140,11 +150,12 @@ class TestAttribution:
 
 
 class TestOrthogonalizedCPI:
-    def test_cpi_matches_integrated_loco_under_misspecification(self):
+    def test_cpi_is_orthogonal_under_misspecification(self):
         """With outcomes and the squared error, CPI carries the orthogonalizing
-        term and shares the expectation of the integrated LOCO score,
-        b_hat_j (2 b_j - b_hat_j), for a linear model fitted with coefficients
-        b_hat on independent Gaussian X."""
+        term and estimates b_hat_j (2 b_j - b_hat_j) for a linear model fitted
+        with coefficients b_hat on independent Gaussian X.  SCPI needs no
+        orthogonalizing term and exceeds it by the Monte Carlo variance
+        b_hat_j^2 / B."""
         rng = np.random.default_rng(1)
         n, d = 6000, 4
         X = rng.standard_normal((n, d))
@@ -152,13 +163,14 @@ class TestOrthogonalizedCPI:
         y = X @ b + rng.standard_normal(n)
         b_hat = b + np.array([0.3, -0.3, 0.3, 0.0])
         phi = {}
-        for m in ("cpi", "loco"):
-            ex = EOTExplainer(lambda Xo: Xo @ b_hat, X, epsilon=0.0, nsamples=50,
+        B = 50
+        for m in ("cpi", "scpi"):
+            ex = EOTExplainer(lambda Xo: Xo @ b_hat, X, epsilon=0.0, nsamples=B,
                               random_state=3, method=m, compute_diagnostics=False)
             phi[m] = np.asarray(ex(X, y)["phi_Z"])
         target = b_hat * (2 * b - b_hat)
         assert np.allclose(phi["cpi"], target, rtol=0.05, atol=0.05)
-        assert np.allclose(phi["cpi"], phi["loco"], atol=0.03)
+        assert np.allclose(phi["scpi"], phi["cpi"] + b_hat ** 2 / B, atol=0.03)
 
 
 class TestCrossfitting:
@@ -170,7 +182,7 @@ class TestCrossfitting:
         y = X[:, 0] + rng.standard_normal(600)
         cf = Crossfitting(
             lambda x: x[:, 0], X, y=y, explainer_class=EOTExplainer, cv=2,
-            epsilon=1.0, nsamples=20, method="loco",
+            epsilon=1.0, nsamples=20,
         )
         res = cf()
         s2 = gaussian_eot_scale(1.0) ** 2
