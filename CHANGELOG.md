@@ -1,5 +1,90 @@
 # Changelog
 
+## [0.2.1] - 2026-10-23
+### Fixed
+- **Gaussian EOT coupling**: ``EOTExplainer`` used the scale
+  ``sqrt(1+eps)/(1+eps/2)``, which is not the entropic OT solution. The
+  Gaussian coupling between ``N(0, I)`` marginals with quadratic cost has
+  cross-covariance ``s = (sqrt(eps^2 + 16) - eps)/4`` and conditional variance
+  ``1 - s^2`` (``fdfi.explainers.eot.gaussian_eot_scale``).
+- **EOT latent features** are drawn from the coupling, so they have the
+  ``N(0, I)`` marginal, and the latent regression is the average of the model
+  over ``n_eta`` backward draws instead of the model at the barycentric map.
+  ``Crossfitting`` uses the same construction.
+- **CPI first-order bias**: with outcomes and the squared error,
+  ``method='cpi'`` adds the orthogonalizing term ``(y - ŷ)(ŷ - E_b[ŷ_b])`` so
+  that its expectation no longer depends on the regression error at first
+  order. This applies to all explainers.
+- **Gap margin with unbiased null scores**: null scores now take either sign.
+  The ``'gap'`` rule used a floor of 1% of the smallest positive score, which
+  always created a 100x jump at the first positive score and split the null
+  cluster. With negative scores the floor is now the magnitude of the most
+  negative score, and the margin is clipped at zero, as for the
+  ``'mixture'`` rule.
+- **Crossfitting draws per fold**: every fold explainer received the same
+  ``random_state``, so ``EOTExplainer`` gave rows in different folds identical
+  coupling noise and counterfactual draws, and the standard errors were too
+  small.  Each fold now draws from its own seed, spawned from
+  ``random_state``, whose default is now 0, so cross-fitted results are
+  reproducible by default.
+- **Repeated calls reused the same draws**: every call of ``OTExplainer``,
+  ``EOTExplainer`` or ``FlowExplainer`` restarted the counterfactual and
+  coupling streams from ``random_state``, so scoring a test set in equal-size
+  chunks gave correlated per-sample scores and too small pooled standard
+  errors.  Each call now draws from a new stream spawned from
+  ``random_state``; a sequence of calls stays reproducible.
+- ``EOTExplainer(auto_epsilon=True)`` chooses epsilon from a subsample with a
+  fixed seed, so it depends on the data only and all ``Crossfitting`` folds
+  share it.
+- ``EOTExplainer(n_jobs=1)`` calls the model on the calling thread, so
+  thread-local settings such as ``torch.no_grad()`` apply.
+- The FAQ described Gower-distance options for ``EOTExplainer`` that do not
+  exist, and the user guide and API page listed nonexistent ``target``,
+  ``stochastic_transport`` and ``cost_metric`` options.
+
+### Added
+- ``EOTExplainer(n_eta=10)``: coupling draws for the CPI baseline.  For the
+  squared error, ``method='cpi'`` uses two coupling draws per counterfactual
+  replicate and removes the Monte Carlo bias of the baseline and the
+  replicates; other losses use ``n_eta`` draws per replicate.
+- ``EOTExplainer(n_jobs=1)``: features scored in parallel threads, with
+  results independent of ``n_jobs``. It speeds up models that predict on a
+  single core; models that already use all cores gain little.
+
+### Changed
+- ``Crossfitting`` obtains each fold's per-sample scores and training-fold
+  resampling pool through the explainers' shared ``_ueifs`` and ``_set_pool``
+  methods, and ``FlowExplainer`` computes its scores through the shared
+  aggregation; explainers without them are no longer accepted.
+- **Migration:** EOT scores computed with ``epsilon > 0`` change; at
+  ``epsilon = 0`` the coupling is the Gaussian OT map. Attributed importance
+  follows the barycentric projection, so for standardized features
+  ``sum(phi_X) = s^2 * sum(phi_Z)``.
+- ``EOTExplainer(method='scpi')`` uses one joint draw of the latent coordinate
+  and coupling noise per counterfactual replicate, and evaluates the baseline
+  on the same coupling draws, so their noise cancels up to an
+  ``O(1/nsamples)`` bias.
+
+## [0.2.0]
+### Changed
+- **Result objects.** Calling an explainer now returns an `ExplanationResults`
+  object and `conf_int()` returns a `ConfIntResults` object instead of a plain
+  `dict`. Both subclass `dict`, so key access such as `results["phi_X"]` keeps
+  working, and add attribute access (`results.phi_X`), `to_frame()`,
+  `top_features()` / `significant()` and an informative printed summary.
+- **`summary()` no longer returns the table when printing.** With the default
+  `print_output=True` it prints the table and returns `None`, so the table is no
+  longer displayed twice in Jupyter/IPython. Use `print_output=False` to obtain
+  the string.
+
+### Added
+- Informative `__repr__` / `__str__` for all explainer classes (`OTExplainer`,
+  `EOTExplainer`, `FlowExplainer`, `Crossfitting`) and result classes.
+
+### Fixed
+- Return type annotation of `OTExplainer.__call__` (was `np.ndarray`).
+- API docs listed a non-existent `summary(feature_names=None)` signature.
+
 ## [0.1.0]
 ### Fixed
 - **CPI/SCPI resampling definitions** now match the FDFI paper. ``method='cpi'``

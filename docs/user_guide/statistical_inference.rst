@@ -33,6 +33,12 @@ intervals.
    The central-limit-theorem approximation works best when ``n >= 30``.  With
    very small test sets the coverage of the reported CIs will be approximate.
 
+For ``OTExplainer`` and ``EOTExplainer`` the standard errors treat the mean
+and covariance estimated from the background as fixed, so the intervals cover
+the importance under that fitted geometry.  The estimation error of the
+covariance is not included and can make the intervals for ``phi_X`` too
+narrow for the importance under the population covariance.
+
 ----
 
 Variance Floor

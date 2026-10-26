@@ -20,20 +20,39 @@ The following methods are available on all working explainer classes
 
 ``__call__(X_test)``
     Compute per-sample UEIFs and aggregate them to ``phi_X`` / ``phi_Z`` plus
-    standard errors.  Returns a ``dict``; also stores ``explainer.ueifs_X``
-    and ``explainer.ueifs_Z``.
+    standard errors. Returns a dict-compatible ``ExplanationResults`` with
+    attribute access, ``importance()``, ``to_frame()`` and ``top_features()``;
+    also stores ``explainer.ueifs_X`` and ``explainer.ueifs_Z``.
 
 ``conf_int(alpha=0.05, alternative='two-sided', margin=0.0, multitest_method=None, ...)``
-    Compute confidence intervals and p-values from the stored UEIFs.  See
+    Compute confidence intervals and p-values from the stored UEIFs. Returns
+    a dict-compatible ``ConfIntResults`` with ``to_frame()`` and
+    ``significant()`` methods. See
     :doc:`../user_guide/statistical_inference` for detailed usage.
 
-``summary(feature_names=None)``
+``summary(alpha=0.05, print_output=True, **kwargs)``
     Print a tabular summary of feature importances, standard errors, and
-    significance.
+    significance, returning ``None``. Returns the table as a string only when
+    ``print_output=False``.
 
 ``diagnose(X_orig=None, Z_full=None, report_title='')``
     (Re-)compute latent independence (dCor) and distribution fidelity (MMD)
     diagnostics.
+
+Result objects
+--------------
+
+Result containers subclass ``dict``, preserving key access such as
+``results["phi_X"]`` while supporting ``results.phi_X``. Calling ``to_frame()``
+requires pandas, imported only when this method is used.
+
+.. autoclass:: fdfi.results.ExplanationResults
+   :members:
+   :show-inheritance:
+
+.. autoclass:: fdfi.results.ConfIntResults
+   :members:
+   :show-inheritance:
 
 Loss Functions
 --------------
@@ -107,20 +126,20 @@ point for most use cases.
    explainer = OTExplainer(model, data=X_background, nsamples=50)
    results = explainer(X_test)
 
-   print("Feature importance (X-space):", results["phi_X"])
-   print("Standard errors:", results["se_X"])
+   print("Feature importance (X-space):", results.phi_X)
+   print("Standard errors:", results.se_X)
 
    # Compute confidence intervals with FDR control (Benjamini-Hochberg)
    ci = explainer.conf_int(multitest_method='fdr_bh', alpha=0.05)
-   print("Significant features after FDR control:", np.where(ci["reject_null"])[0])
-   print("Adjusted p-values:", ci["pvalue_adj"])
+   print("Significant features after FDR control:", ci.significant())
+   print("Adjusted p-values:", ci.pvalue_adj)
 
 Entropic Optimal Transport (EOTExplainer)
 -----------------------------------------
 
-The ``EOTExplainer`` uses entropic optimal transport with Sinkhorn iterations. 
-It supports adaptive epsilon, stochastic transport sampling, and both Gaussian 
-and empirical transport targets.
+The ``EOTExplainer`` couples the whitened features with ``N(0, I)`` by the
+closed-form Gaussian entropic OT coupling.  It supports a fixed or adaptive
+epsilon and the CPI or SCPI scores.
 
 .. autoclass:: fdfi.explainers.EOTExplainer
    :members:
@@ -137,9 +156,8 @@ and empirical transport targets.
        model.predict,
        X_background,
        auto_epsilon=True,           # Adaptive regularization
-       stochastic_transport=True,   # Sample from transport kernel
-       n_transport_samples=10,      # Number of transport samples
-       target="gaussian",           # or "empirical"
+       n_eta=10,                    # Coupling draws for the latent regression
+       method="scpi",               # One coupling draw per replicate
    )
    results = explainer(X_test)
 
@@ -173,13 +191,17 @@ normalizing flows. It supports both CPI (Conditional Permutation Importance)
 and SCPI (Sobol-CPI), using the definitions in the FDFI paper:
 
 - **CPI**: Average per-resample loss differences and multiply by one half:
-  :math:`\tfrac12\mathbb{E}_b[L(Y,f(\tilde X_b))-L(Y,f(X))]`.
+  :math:`\tfrac12\mathbb{E}_b[L(Y,f(\tilde X_b))-L(Y,f(X))]`,
+  plus the orthogonalizing term
+  :math:`\big(Y-f(X)\big)\big(f(X)-\mathbb{E}_b[f(\tilde X_b)]\big)` with
+  outcomes and the squared-error or Brier loss.
 - **SCPI**: Average the counterfactual predictions before applying the loss:
   :math:`L(Y,\mathbb{E}_b[f(\tilde X_b)])-L(Y,f(X))`.
 
 Both use the configurable ``loss`` (default squared error). For the same finite
 Monte Carlo draws and squared-error loss,
-:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]`.
+:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]+2\big(Y-f(X)\big)\big(f(X)-\mathbb{E}_b[f(\tilde X_b)]\big)`,
+without the last term in the label-free form.
 With an exact disentangling map and a Bayes predictor, CPI and infinite-resample
 SCPI estimate the same population importance. Conventional CPI in the broader
 CPI literature omits the one-half normalization and is therefore twice the

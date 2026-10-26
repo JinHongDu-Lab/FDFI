@@ -3,8 +3,9 @@ Flow-based DFI explainer using normalizing flows.
 """
 
 import numpy as np
-from typing import Optional, Union, Callable, Any
+from typing import Optional, Union, Callable, Any, Tuple
 from .base import Explainer
+from ..results import ExplanationResults
 
 
 class FlowExplainer(Explainer):
@@ -50,7 +51,10 @@ class FlowExplainer(Explainer):
         - 'scpi': Sobol-CPI - average predictions before applying the loss
         - 'both': Compute both CPI and SCPI
     random_state : int, optional
-        Random seed for reproducibility.
+        Seed for the counterfactual draws (``None`` means 0) and the default
+        flow training seed.  Each call draws from a new stream spawned from
+        it, so repeated calls (e.g. on chunks of a test set) are independent
+        and the sequence of calls is reproducible.
     verbose : bool or str, default='final'
         Controls training output:
         - True or 'all': Show full progress bar
@@ -100,6 +104,15 @@ class FlowExplainer(Explainer):
     >>> results = explainer(X_test)
     """
     
+    def _repr_lines(self) -> list:
+        lines = super()._repr_lines()
+        fitted = getattr(self, "flow_model", None) is not None
+        lines.insert(
+            2,
+            "  Flow model: " + ("fitted" if fitted else "not fitted (call fit_flow())"),
+        )
+        return lines
+
     def __init__(
         self,
         model: Callable[[np.ndarray], np.ndarray],
@@ -128,7 +141,7 @@ class FlowExplainer(Explainer):
         
         self.nsamples = nsamples
         self.sampling_method = sampling_method
-        self.random_state = random_state if random_state is not None else 0
+        self._set_random_state(random_state)
         self.method = method.lower()
         self.verbose = verbose
         self.kwargs = kwargs
@@ -274,7 +287,10 @@ class FlowExplainer(Explainer):
     def _encode_background(self) -> None:
         """Encode background data to Z space."""
         if self.data is not None and self.flow_model is not None:
-            self.Z_full = self._encode_to_Z(self.data)
+            self._set_pool(self.data)
+
+    def _set_pool(self, X: np.ndarray) -> None:
+        self.Z_full = self._encode_to_Z(X)
     
     def _encode_to_Z(
         self,
@@ -429,7 +445,13 @@ class FlowExplainer(Explainer):
         H_avg = H_sum / n_samples
         return H_avg
     
-    def _phi_Z(self, Z: np.ndarray, y: np.ndarray, y_true: Optional[np.ndarray] = None) -> tuple:
+    def _phi_Z(
+        self,
+        Z: np.ndarray,
+        y: np.ndarray,
+        key: int,
+        y_true: Optional[np.ndarray] = None,
+    ) -> tuple:
         """
         Compute CPI and SCPI importance in Z-space through ``self._loss``.
 
@@ -452,6 +474,9 @@ class FlowExplainer(Explainer):
             Latent space data, shape (n, d).
         y : numpy.ndarray
             Baseline model predictions, shape (n,).
+        key : int
+            Seed of this call's draws; feature ``j`` uses the stream
+            ``[key, j]`` (see :meth:`_call_key`).
         y_true : numpy.ndarray, optional
             True outcomes, shape (n,).  When provided, uses the DFI loss-difference
             form; when omitted, the label-free divergence form is used.
@@ -468,8 +493,8 @@ class FlowExplainer(Explainer):
         ueifs_scpi = np.zeros((n, d))
         
         for j in range(d):
-            rng = np.random.default_rng(self.random_state + j)
-            
+            rng = np.random.default_rng([key, j])
+
             # Create B copies of Z: shape (B, n, d)
             Z_tilde = np.tile(Z[None, :, :], (self.nsamples, 1, 1))
             
@@ -489,7 +514,6 @@ class FlowExplainer(Explainer):
             elif self.sampling_method == "condperm":
                 # Conditional permutation using permuter
                 from sklearn.base import clone
-                from sklearn.utils import shuffle
                 Z_minus_j = np.delete(Z, j, axis=1)
                 z_j = Z[:, j]
                 rg = clone(self.permuter)
@@ -497,8 +521,7 @@ class FlowExplainer(Explainer):
                 z_j_hat = rg.predict(Z_minus_j)
                 eps_z = z_j - z_j_hat
                 for b in range(self.nsamples):
-                    eps_perm = shuffle(eps_z, random_state=self.random_state + j * 1000 + b)
-                    Z_tilde[b, :, j] = z_j_hat + eps_perm
+                    Z_tilde[b, :, j] = z_j_hat + rng.permutation(eps_z)
             else:
                 raise ValueError(f"Unknown sampling_method: {self.sampling_method}")
             
@@ -524,10 +547,54 @@ class FlowExplainer(Explainer):
         
         return ueifs_cpi, ueifs_scpi
     
-    def __call__(self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any) -> dict:
+    def _ueifs_by_method(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None
+    ) -> dict:
+        """Per-sample ``(ueifs_X, ueifs_Z)`` of CPI and SCPI, keyed by method."""
+        Z = self._encode_to_Z(X)
+        # Baseline predictions on the decoded X, for consistency with the flow.
+        y_pred = self.model(self._decode_to_X(Z))
+        ueifs_cpi, ueifs_scpi = self._phi_Z(Z, y_pred, self._call_key(), y_true=y)
+
+        # Map to X-space via the Jacobian H = dX/dZ:
+        # ueifs_X[i, l] = sum_k H[l, k]^2 * ueifs_Z[i, k].
+        jacobian_mode = self.kwargs.get("jacobian_mode", "average")
+        if jacobian_mode == "per_sample":
+            H_sq_batch = self.flow_model.Jacobi_Batch(Z) ** 2  # (n, d, d)
+
+            def to_X(U: np.ndarray) -> np.ndarray:
+                return np.einsum("ilk,ik->il", H_sq_batch, U)
+
+        else:
+            if jacobian_mode == "avg_sq":
+                # Average of squared Jacobians, E[H_i^2]: avoids the
+                # cancellation in E[H_i]^2 for sign-flipping (binary) features.
+                n_est = min(Z.shape[0], self.kwargs.get("jacobian_n_samples", 100))
+                H_sq = (self.flow_model.Jacobi_Batch(Z[:n_est]) ** 2).mean(axis=0)
+            else:
+                H_sq = self._compute_jacobian(Z) ** 2
+
+            def to_X(U: np.ndarray) -> np.ndarray:
+                return U @ H_sq.T
+
+        return {
+            "cpi": (to_X(ueifs_cpi), ueifs_cpi),
+            "scpi": (to_X(ueifs_scpi), ueifs_scpi),
+        }
+
+    def _ueifs(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Per-sample UEIFs ``(ueifs_X, ueifs_Z)`` of ``self.method`` (CPI for
+        ``'both'``); shared with :class:`Crossfitting`."""
+        return self._ueifs_by_method(X, y)["scpi" if self.method == "scpi" else "cpi"]
+
+    def __call__(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any
+    ) -> ExplanationResults:
         """
         Compute feature importance.
-        
+
         Parameters
         ----------
         X : numpy.ndarray
@@ -538,132 +605,28 @@ class FlowExplainer(Explainer):
             is used.
         **kwargs : dict
             Additional parameters (unused, for API compatibility).
-        
+
         Returns
         -------
-        dict
-            Dictionary containing:
+        ExplanationResults
+            Dict-compatible result with attribute access, ``importance()``,
+            ``to_frame()`` and ``top_features()``. Contains:
             - phi_Z: Z-space importance (d,) - CPI or SCPI depending on method
             - std_Z: Standard deviation (d,)
             - se_Z: Standard error (d,)
             - phi_X: X-space importance (d,) - transformed via Jacobian
             - std_X: Standard deviation (d,)
             - se_X: Standard error (d,)
-            When method='both', also includes phi_Z_scpi, std_Z_scpi, se_Z_scpi.
+            When method='both', these are CPI and the result also includes
+            the SCPI fields with suffix ``_scpi``.
         """
-        n, d = X.shape
-        
-        # Encode to Z space
-        Z = self._encode_to_Z(X)
-        
-        # Get model predictions on decoded X (for consistency with flow)
-        X_hat = self._decode_to_X(Z)
-        y_pred = self.model(X_hat)
-        
-        # Compute both CPI and SCPI in Z-space (per-sample UEIFs)
-        ueifs_cpi, ueifs_scpi = self._phi_Z(Z, y_pred, y_true=y)
-        
-        # Transform per-sample UEIFs from Z-space to X-space via Jacobian H = dX/dZ
-        # ueifs_X[i, l] = sum_k H[l,k]^2 * ueifs_Z[i, k]
-        jacobian_mode = self.kwargs.get("jacobian_mode", "average")
-        n_jac = self.kwargs.get("jacobian_n_samples", 100)
-        if jacobian_mode == "per_sample":
-            # Per-sample Jacobians: H_batch[i] = dX/dZ at Z[i]
-            H_batch = self.flow_model.Jacobi_Batch(Z)   # (n, d, d)
-            H_sq_batch = H_batch ** 2
-            ueifs_cpi_X  = np.einsum("ilk,ik->il", H_sq_batch, ueifs_cpi)
-            ueifs_scpi_X = np.einsum("ilk,ik->il", H_sq_batch, ueifs_scpi)
-        elif jacobian_mode == "avg_sq":
-            # Average of squared Jacobians: E[H_i^2] — correct for binary data.
-            # Avoids the cancellation in E[H_i]^2 for sign-flipping features.
-            n_est = min(n, n_jac)
-            H_batch = self.flow_model.Jacobi_Batch(Z[:n_est])  # (n_est, d, d)
-            H_sq_avg = (H_batch ** 2).mean(axis=0)              # (d, d)
-            ueifs_cpi_X  = ueifs_cpi  @ H_sq_avg.T
-            ueifs_scpi_X = ueifs_scpi @ H_sq_avg.T
-        else:  # "average" — existing behaviour, backward-compatible
-            H = self._compute_jacobian(Z)
-            H_sq = H ** 2
-            ueifs_cpi_X  = ueifs_cpi  @ H_sq.T
-            ueifs_scpi_X = ueifs_scpi @ H_sq.T
-        
-        # Store per-sample UEIFs for group_importance()
-        if self.method == "scpi":
-            self.ueifs_Z = ueifs_scpi
-            self.ueifs_X = ueifs_scpi_X
-        else:
-            self.ueifs_Z = ueifs_cpi
-            self.ueifs_X = ueifs_cpi_X
-        
-        # Aggregate statistics
-        ddof = 1 if n > 1 else 0
-        results = {}
-        
-        if self.method == "cpi":
-            # Z-space (CPI)
-            phi_Z = np.mean(ueifs_cpi, axis=0)
-            std_Z = np.std(ueifs_cpi, axis=0)
-            se_Z = np.std(ueifs_cpi, axis=0, ddof=ddof) / np.sqrt(n)
-            # X-space (transformed via Jacobian)
-            phi_X = np.mean(ueifs_cpi_X, axis=0)
-            std_X = np.std(ueifs_cpi_X, axis=0)
-            se_X = np.std(ueifs_cpi_X, axis=0, ddof=ddof) / np.sqrt(n)
-            results.update({
-                "phi_Z": phi_Z,
-                "std_Z": std_Z,
-                "se_Z": se_Z,
-                "phi_X": phi_X,
-                "std_X": std_X,
-                "se_X": se_X,
-            })
-        elif self.method == "scpi":
-            # Z-space (SCPI)
-            phi_Z = np.mean(ueifs_scpi, axis=0)
-            std_Z = np.std(ueifs_scpi, axis=0)
-            se_Z = np.std(ueifs_scpi, axis=0, ddof=ddof) / np.sqrt(n)
-            # X-space (transformed via Jacobian)
-            phi_X = np.mean(ueifs_scpi_X, axis=0)
-            std_X = np.std(ueifs_scpi_X, axis=0)
-            se_X = np.std(ueifs_scpi_X, axis=0, ddof=ddof) / np.sqrt(n)
-            results.update({
-                "phi_Z": phi_Z,
-                "std_Z": std_Z,
-                "se_Z": se_Z,
-                "phi_X": phi_X,
-                "std_X": std_X,
-                "se_X": se_X,
-            })
-        else:  # method == "both"
-            # CPI (Z-space and X-space)
-            phi_Z_cpi = np.mean(ueifs_cpi, axis=0)
-            std_Z_cpi = np.std(ueifs_cpi, axis=0)
-            se_Z_cpi = np.std(ueifs_cpi, axis=0, ddof=ddof) / np.sqrt(n)
-            phi_X_cpi = np.mean(ueifs_cpi_X, axis=0)
-            std_X_cpi = np.std(ueifs_cpi_X, axis=0)
-            se_X_cpi = np.std(ueifs_cpi_X, axis=0, ddof=ddof) / np.sqrt(n)
-            # SCPI (Z-space and X-space)
-            phi_Z_scpi = np.mean(ueifs_scpi, axis=0)
-            std_Z_scpi = np.std(ueifs_scpi, axis=0)
-            se_Z_scpi = np.std(ueifs_scpi, axis=0, ddof=ddof) / np.sqrt(n)
-            phi_X_scpi = np.mean(ueifs_scpi_X, axis=0)
-            std_X_scpi = np.std(ueifs_scpi_X, axis=0)
-            se_X_scpi = np.std(ueifs_scpi_X, axis=0, ddof=ddof) / np.sqrt(n)
-            results.update({
-                # Default to CPI for phi_Z/phi_X
-                "phi_Z": phi_Z_cpi,
-                "std_Z": std_Z_cpi,
-                "se_Z": se_Z_cpi,
-                "phi_X": phi_X_cpi,
-                "std_X": std_X_cpi,
-                "se_X": se_X_cpi,
-                # SCPI with suffix
-                "phi_Z_scpi": phi_Z_scpi,
-                "std_Z_scpi": std_Z_scpi,
-                "se_Z_scpi": se_Z_scpi,
-                "phi_X_scpi": phi_X_scpi,
-                "std_X_scpi": std_X_scpi,
-                "se_X_scpi": se_X_scpi,
-            })
-        
+        if self.method != "both":
+            return self._explain(X, y)
+        ueifs = self._ueifs_by_method(X, y)
+        self.ueifs_X, self.ueifs_Z = ueifs["cpi"]
+        results = self._moments(*ueifs["cpi"])
+        scpi = self._moments(*ueifs["scpi"])
+        results.update({f"{k}_scpi": v for k, v in scpi.items()})
+        n = X.shape[0]
         self._cache_results(results, n)
-        return results
+        return ExplanationResults(results, explainer_name=type(self).__name__, n=n)

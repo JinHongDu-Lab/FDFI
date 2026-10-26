@@ -2,35 +2,81 @@
 Entropic optimal-transport (EOT) DFI explainer.
 """
 
+import os
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+
 import numpy as np
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Tuple
 from scipy.spatial.distance import pdist
 from .base import Explainer
+from ..losses import brier, squared_error
+from ..results import ExplanationResults
+
+
+def gaussian_eot_scale(epsilon: float) -> float:
+    """Cross-covariance scale of the Gaussian EOT coupling.
+
+    For source and target both N(0, I), quadratic cost ``||x - z||^2`` and
+    entropic penalty ``epsilon * KL``, the optimal coupling is Gaussian with
+    ``Z | X = x ~ N(s x, (1 - s^2) I)`` where ``s`` is the positive root of
+    ``2 s^2 + epsilon s - 2 = 0``:
+
+        s = (sqrt(epsilon^2 + 16) - epsilon) / 4.
+
+    The conditional variance ``1 - s^2`` is what makes the marginal of ``Z``
+    equal to ``N(0, I)``.  ``epsilon = 0`` gives the identity map (``s = 1``).
+    """
+    if epsilon <= 0:
+        return 1.0
+    return float((np.sqrt(epsilon ** 2 + 16.0) - epsilon) / 4.0)
 
 
 class EOTExplainer(Explainer):
     """
-    Entropic optimal-transport DFI explainer using semicontinuous transport
-    and population backward attribution.
+    Entropic optimal-transport DFI explainer.
 
-    Uses the population EOT coupling between the empirical source and
-    continuous N(0, I) target.  The forward map is analytical:
+    The covariates are whitened with the background covariance,
+    ``X_w = L^{-1} (X - mean)``, and coupled with the reference law ``N(0, I)``
+    by entropic OT with quadratic cost and regularization ``epsilon``.
+    Treating ``X_w`` as Gaussian, the coupling has the closed form
 
-        Z = c_ε · X_whitened,   c_ε = √(1 + ε) / (1 + ε/2)
+        Z | X_w ~ N(s X_w, (1 - s^2) I),   X_w | Z ~ N(s Z, (1 - s^2) I),
+        s = (sqrt(eps^2 + 16) - eps) / 4,
 
-    Backward attribution uses the best linear projection:
+    so that ``Z ~ N(0, I)`` has independent coordinates (see
+    :func:`gaussian_eot_scale`).
 
-        E[X_whitened | Z] = M_w · Z
+    Latent features are drawn from the forward conditional, and the latent
+    regression ``eta(z) = E[f(X) | Z = z]`` is a Monte Carlo average of the
+    model over draws from the backward conditional.  Counterfactuals replace
+    ``Z_j`` by draws from its marginal and are scored by ``method``:
 
-    where M_w = E_π[ZZ^T]^{-1} E_π[ZX_w^T] is computed analytically
-    from the semicontinuous coupling moments.  This gives the weight
-    matrix  W = L @ M_w  used for the decomposition:
+    - ``'cpi'``: one half the average per-replicate loss difference.  The
+      baseline averages ``n_eta`` coupling draws.  For the squared error each
+      replicate uses two draws, whose difference estimates its Monte Carlo
+      variance, and the Monte Carlo bias is removed (see
+      :meth:`Explainer._ueif_from_counterfactuals`); a feature costs
+      ``2 * nsamples`` model evaluations per point.  Other losses use
+      ``n_eta`` draws per replicate, so that the noise of the baseline and the
+      replicates matches.
+    - ``'scpi'``: the loss at the averaged counterfactual prediction minus the
+      baseline loss.  Each replicate uses one joint draw of ``Z_j`` and the
+      coupling noise, and the baseline averages the model over the same
+      coupling draws without replacing ``Z_j``, so their noise cancels in the
+      score up to an ``O(1/nsamples)`` bias.  A feature costs ``nsamples``
+      model evaluations per point.
 
-        φ_X_j = Σ_k W[j,k]² · φ_Z_k
+    Each coupling draw's noise
+    is shared across features, which leaves every feature's score and the
+    per-sample standard errors unchanged in distribution and avoids
+    recomputing the ``d x d`` noise transform per feature.
 
-    Feature importance is measured from counterfactual resamples in latent
-    space. CPI uses one half the average per-resample loss difference; SCPI
-    applies the loss after averaging the counterfactual predictions.
+    Importance is attributed to ``X`` through the barycentric projection
+    ``E[X | Z = z] = mean + s L z``, giving ``phi_X_l = sum_j W[l, j]^2 phi_Z_j``
+    with ``W = s L``.  For standardized features
+    ``sum_l phi_X_l = s^2 sum_j phi_Z_j``; the totals agree only at
+    ``epsilon = 0``.
 
     Parameters
     ----------
@@ -39,27 +85,39 @@ class EOTExplainer(Explainer):
     data : numpy.ndarray
         Background data for whitening and resampling.  Shape (n, d).
     nsamples : int, default=50
-        Number of Monte Carlo samples per feature for counterfactual
-        resampling.
+        Number of counterfactual replicates per feature.
     epsilon : float, default=0.1
-        EOT regularization parameter.  Smaller ε → closer to exact OT;
-        larger ε → more Gaussian shrinkage.
+        EOT regularization parameter on the whitened scale.  ``epsilon = 0``
+        gives the Gaussian OT map.
     auto_epsilon : bool, default=False
-        If True, set ε from a median-distance heuristic in whitened space.
+        If True, set ε from a median-distance heuristic in whitened space.  It
+        depends on ``data`` only, not on ``random_state``.
     sampling_method : str, default='resample'
         How to draw counterfactual Z_j values:
         - 'resample': sample from the background Z pool
         - 'permutation': permute within the test set
         - 'normal': sample from N(0, 1)
     random_state : int, default=0
-        Random seed for reproducibility.
+        Seed for the latent pool and the Monte Carlo draws.  Each call draws
+        from a new stream spawned from it, so repeated calls (e.g. on chunks of
+        a test set) are independent and the sequence of calls is reproducible.
     method : {'cpi', 'scpi'}, default='cpi'
-        Resampling estimator. CPI averages per-resample loss differences and
-        multiplies by one half; SCPI averages predictions before applying the
-        loss. These match the definitions in the FDFI paper.
+        Importance estimator (see above).
+    n_eta : int, default=10
+        Coupling draws for the baseline ``eta`` of ``'cpi'``; at least 2 so
+        that its Monte Carlo variance can be estimated.
+    n_jobs : int, default=1
+        Number of features scored in parallel threads; -1 uses all CPUs.
+        Each thread holds a few arrays of ``nsamples * n_test * d`` floats,
+        and ``model`` must be safe to call from several threads (scikit-learn
+        ``predict`` is).  With ``n_jobs=1`` the model runs on the calling
+        thread.  Results do not depend on ``n_jobs``.
     **kwargs : dict
         Extra arguments forwarded to the base Explainer.
     """
+    #: Attributes shown in the printed representation.
+    _REPR_PARAMS = Explainer._REPR_PARAMS + ("epsilon", "auto_epsilon", "n_eta")
+
     def __init__(
         self,
         model: Callable[[np.ndarray], np.ndarray],
@@ -70,159 +128,231 @@ class EOTExplainer(Explainer):
         sampling_method: str = "resample",
         random_state: Optional[int] = 0,
         method: str = "cpi",
+        n_eta: int = 10,
+        n_jobs: int = 1,
         **kwargs: Any
     ):
         super().__init__(model, data, fit_flow=False, **kwargs)
+        self.method = str(method).lower()
+        if self.method not in ("cpi", "scpi"):
+            raise ValueError(f"method must be 'cpi' or 'scpi', got {method!r}")
+        if n_eta < 2:
+            raise ValueError(f"n_eta must be at least 2, got {n_eta}")
         self.nsamples = nsamples
         self.epsilon = epsilon
         self.auto_epsilon = auto_epsilon
         self.sampling_method = sampling_method
-        self.random_state = random_state if random_state is not None else 0
-        self.method = method
+        self._set_random_state(random_state)
+        self.n_eta = n_eta
+        self.n_jobs = n_jobs
         self.regularize = kwargs.get("regularize", 1e-6)
 
         # ── Gaussian whitening ───────────────────────────────────────────
-        self.mean = np.mean(data, axis=0, keepdims=True)
-        self.cov = np.cov(data - self.mean, rowvar=False, ddof=0)
-        self.cov = (self.cov + self.cov.T) / 2
-
-        eigenvals, eigenvecs = np.linalg.eigh(self.cov)
-        eigenvals = np.maximum(eigenvals, self.regularize)
-
-        self.L = eigenvecs @ np.diag(eigenvals**0.5) @ eigenvecs.T
-        self.L_inv = eigenvecs @ np.diag(eigenvals**-0.5) @ eigenvecs.T
-
-        X_centered = data - self.mean
-        X_whitened = X_centered @ self.L_inv
-
+        self._whiten(data)
         if self.auto_epsilon:
-            self.epsilon = self._auto_epsilon(X_centered)
+            self.epsilon = self._auto_epsilon(data - self.mean)
 
-        # ── Semicontinuous population forward map ────────────────────────
-        # Analytical scaling for Gaussian source → N(0,I) target:
-        #   c_ε = √(1 + ε) / (1 + ε/2)
-        # At ε=0 this gives c=1 (identity); as ε→∞ it approaches 0.
-        eps = self.epsilon
-        if eps == 0:
-            self.s_fwd = 1.0
-        else:
-            self.s_fwd = np.sqrt(1.0 + eps) / (1.0 + eps / 2.0)
-        self.L_z = self.s_fwd * self.L
+        # ── Gaussian EOT coupling ────────────────────────────────────────
+        self.s_fwd = gaussian_eot_scale(self.epsilon)
+        self.sigma_fwd = float(np.sqrt(1.0 - self.s_fwd ** 2))
+        # Jacobian of the barycentric projection E[X | Z = z] = z @ W + mean.
+        self.W = self.s_fwd * self.L
 
-        # ── Population backward attribution weights ──────────────────────
-        # Under the semicontinuous coupling Z|X ~ N(c_ε·X_w, σ²·I)
-        # where σ² = 1 - c_ε²  (variance complement for unit marginals).
-        # E_π[ZX_w^T] = c_ε · Σ̂_w
-        # E_π[ZZ^T]   = σ² · I + c_ε² · Σ̂_w
-        # M_w = E_π[ZZ^T]^{-1} E_π[ZX_w^T]  (best linear projection)
-        n, d = X_whitened.shape
-        Sigma_hat = (X_whitened.T @ X_whitened) / n
-        c = self.s_fwd
-        sigma_sq = 1.0 - c ** 2
-        Ezz = sigma_sq * np.eye(d) + c ** 2 * Sigma_hat
-        Ezx = c * Sigma_hat
-        M_w = np.linalg.solve(Ezz, Ezx)
-        self.W = self.L @ M_w
-
-        # ── Resampling pool ──────────────────────────────────────────────
-        self.Z_full = self.s_fwd * X_whitened
+        # ── Latent pool for resampling and diagnostics ───────────────────
+        self._set_pool(data)
         self._compute_diagnostics(report_title="EOTExplainer")
 
-    def __call__(self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any) -> dict:
-        n, d = X.shape
-        Z = self.s_fwd * (X - self.mean) @ self.L_inv
-        y_pred = self.model(X)
+    def _set_pool(self, X: np.ndarray) -> None:
+        rng = np.random.default_rng([self.random_state, 11])
+        self.Z_full = self._latent((X - self.mean) @ self.L_inv, rng)
 
-        ueifs_Z = self._phi_Z(Z, y_pred, y_true=y)
-        ueifs_X = ueifs_Z @ (self.W ** 2).T
+    def _latent(self, X_w: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+        """Draw latent features from the forward conditional ``Z | X_w``."""
+        Z = self.s_fwd * X_w
+        if self.sigma_fwd > 0:
+            Z = Z + self.sigma_fwd * rng.standard_normal(X_w.shape)
+        return Z
 
-        # Store per-sample UEIFs for group_importance()
-        self.ueifs_X = ueifs_X
-        self.ueifs_Z = ueifs_Z
+    def _eta(
+        self, Z: np.ndarray, rng: np.random.Generator, n_draws: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Monte Carlo latent regression ``eta(z) = E[f(X) | Z = z]``.
 
-        ddof = 1 if n > 1 else 0
-        results = {
-            "phi_X": np.mean(ueifs_X, axis=0),
-            "std_X": np.std(ueifs_X, axis=0),
-            "se_X": np.std(ueifs_X, axis=0, ddof=ddof) / np.sqrt(n),
-            "phi_Z": np.mean(ueifs_Z, axis=0),
-            "std_Z": np.std(ueifs_Z, axis=0),
-            "se_Z": np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n),
-        }
-        self._cache_results(results, n)
-        return results
+        Returns the average of the model over ``n_draws`` backward draws
+        ``X_w = s z + sqrt(1 - s^2) xi`` and the Monte Carlo variance of that
+        average (zero for a single draw or a deterministic coupling).
+        """
+        if self.sigma_fwd == 0:
+            out = np.asarray(self.model(Z @ self.L + self.mean), dtype=float)
+            return out, np.zeros_like(out)
+        draws = np.empty((n_draws, Z.shape[0]))
+        for k in range(n_draws):
+            X_w = self.s_fwd * Z + self.sigma_fwd * rng.standard_normal(Z.shape)
+            draws[k] = np.asarray(self.model(X_w @ self.L + self.mean), dtype=float)
+        mean = draws.mean(axis=0)
+        if n_draws == 1:
+            return mean, np.zeros_like(mean)
+        return mean, draws.var(axis=0, ddof=1) / n_draws
 
-    def _phi_Z(self, Z: np.ndarray, y_pred: np.ndarray, y_true: Optional[np.ndarray] = None) -> np.ndarray:
-        """Compute per-sample uncentered UEIF in Z-space via counterfactual resampling.
+    def __call__(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any
+    ) -> ExplanationResults:
+        """Compute feature importance for new observations.
 
-        For each feature j, replaces Z_j with independent draws and scores the
-        result through ``self._loss`` using the CPI/SCPI averaging order in
-        ``self.method``:
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Input data, shape (n_samples, n_features).
+        y : numpy.ndarray, optional
+            True outcomes. When omitted, use the label-free divergence form.
+        **kwargs : dict
+            Additional parameters for API compatibility.
 
-            DFI / loss-difference form (y_true provided):
-                UEIF_{i,j} = agg_b L(y_i, ŷ_{b,i}) - L(y_i, ŷ_i)
-            prediction-shift form (default, y_true=None; squared error only):
-                UEIF_{i,j} = agg_b L(ŷ_i, ŷ_{b,i})
+        Returns
+        -------
+        ExplanationResults
+            Dict-compatible importance and uncertainty estimates in X- and
+            Z-space, with attribute access, ``importance()``, ``to_frame()``
+            and ``top_features()``.
+        """
+        return self._explain(X, y)
 
-        CPI uses ``0.5 * E_b[L(y_i, ŷ_{b,i}) - L(y_i, ŷ_i)]``. SCPI uses
-        ``L(y_i, E_b[ŷ_{b,i}]) - L(y_i, ŷ_i)``. With squared-error loss,
-        exact latent independence, and infinitely many resamples, their
-        population targets agree.
+    def _ueifs(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Per-sample UEIFs ``(ueifs_X, ueifs_Z)`` for ``X``.
+
+        Draws the latent features, evaluates the Monte Carlo baseline
+        ``eta(Z)`` and scores the counterfactuals.  Shared with
+        :class:`Crossfitting`.
+        """
+        key = self._call_key()
+        Z = self._latent((X - self.mean) @ self.L_inv, np.random.default_rng([key, 12]))
+        ueifs_Z = self._phi_Z(Z, key, y_true=y)
+        return ueifs_Z @ (self.W ** 2).T, ueifs_Z
+
+    def _phi_Z(
+        self,
+        Z: np.ndarray,
+        key: int,
+        y_true: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """Per-sample uncentered UEIF in latent space.
+
+        For each feature ``j`` the latent coordinate is replaced by
+        independent draws, the model is evaluated at the counterfactuals, and
+        the result is scored by ``self.method`` (see
+        :meth:`Explainer._ueif_from_counterfactuals`).
+
+        - ``'cpi'``: the baseline is ``eta(Z)`` from ``n_eta`` coupling draws.
+          Each replicate uses two coupling draws for the squared error, whose
+          difference estimates and removes its Monte Carlo variance, and
+          ``n_eta`` draws for other losses, matching the baseline.
+        - ``'scpi'``: each replicate uses one coupling draw, and the baseline
+          averages the model over the same draws without replacing ``Z_j``,
+          so their Monte Carlo noise cancels in the score.
 
         Parameters
         ----------
         Z : (n, d) array
-            EOT-mapped whitened data.
-        y_pred : (n,) array
-            Model predictions on the original X.
+            Latent features.
+        key : int
+            Seed of this call's Monte Carlo streams (see :meth:`_call_key`).
         y_true : (n,) array or None
-            True outcome values.  When provided, uses the DFI loss-difference form
-            and enables proper null-feature thresholding; when omitted, the
-            label-free divergence form is used.
+            Outcomes.  When provided, the loss-difference (DFI) form is used;
+            when omitted, the label-free divergence form.
         """
         n, d = Z.shape
-        ueifs_Z = np.zeros((n, d))
-        L_z = self.L_z
+        B = self.nsamples
+        noisy = self.sigma_fwd > 0
+        coupled = self.method == "scpi" and noisy
+        y_pred = base_var = None
+        if not coupled:
+            rng = np.random.default_rng([key, 15])
+            y_pred, base_var = self._eta(Z, rng, self.n_eta)
+        # A deterministic coupling needs a single draw.
+        n_draws = 1
+        if self.method == "cpi" and noisy:
+            n_draws = 2 if self._loss in (squared_error, brier) else self.n_eta
 
-        for j in range(d):
-            rng = np.random.default_rng(self.random_state + j)
-            Z_tilde = np.tile(Z[None, :, :], (self.nsamples, 1, 1))
-
+        def shift(j: int) -> np.ndarray:
+            """``Z~_j - Z_j`` for the B replicates, flattened; seeded per feature."""
+            rng = np.random.default_rng([key, 13, j])
             if self.sampling_method == "resample":
-                idx = rng.choice(
-                    self.Z_full.shape[0], size=(self.nsamples, n), replace=True
-                )
-                Z_tilde[:, :, j] = self.Z_full[idx, j]
+                new = self.Z_full[rng.choice(self.Z_full.shape[0], size=(B, n)), j]
             elif self.sampling_method == "permutation":
-                perm = np.array([rng.permutation(n) for _ in range(self.nsamples)])
-                Z_tilde[:, :, j] = Z[perm, j]
+                new = Z[np.array([rng.permutation(n) for _ in range(B)]), j]
             elif self.sampling_method == "normal":
-                Z_tilde[:, :, j] = rng.normal(0.0, 1.0, size=(self.nsamples, n))
+                new = rng.normal(0.0, 1.0, size=(B, n))
             else:
                 raise ValueError(f"Unknown sampling_method: {self.sampling_method}")
+            return (new - Z[None, :, j]).ravel()
 
-            Z_flat = Z_tilde.reshape(-1, d)
-            X_tilde = Z_flat @ L_z + self.mean
-            y_tilde_all = self.model(X_tilde).reshape(self.nsamples, n)
-            ueifs_Z[:, j] = self._ueif_from_counterfactuals(
-                y_pred, y_tilde_all, method=self.method, y_true=y_true
-            )
+        # A counterfactual differs from the observed latent point only in Z_j,
+        # so its model input is mean + Z W + (Z~_j - Z_j) W[j] + sigma xi L.
+        # The first two terms are shared by all features, and each coupling
+        # draw's noise is shared across features (it stays independent across
+        # replicates and points), so the d x d product runs once per draw.
+        X_obs = np.tile(Z @ self.W + self.mean, (B, 1))
+        sums = np.zeros((d, B * n))
+        # Monte Carlo variance of each replicate's two-draw mean, (f1 - f2)^2 / 4,
+        # averaged over replicates.
+        rep_var = np.zeros((d, n)) if n_draws == 2 else None
+        n_jobs = int(self.n_jobs)
+        if n_jobs == -1:
+            n_jobs = os.cpu_count() or 1
+        n_jobs = min(max(n_jobs, 1), d)
+        with ThreadPoolExecutor(n_jobs) if n_jobs > 1 else nullcontext() as pool:
+            pmap = map if pool is None else pool.map
+            for k in range(n_draws):
+                X_k = X_obs
+                if noisy:
+                    draw = np.random.default_rng([key, 14, k])
+                    xi = draw.standard_normal(X_obs.shape)
+                    X_k = X_obs + self.sigma_fwd * xi @ self.L
+                if coupled:
+                    y_pred = np.asarray(self.model(X_k), dtype=float)
+                    y_pred = y_pred.reshape(B, n).mean(axis=0)
 
-        return ueifs_Z
+                def predict(j: int, X_k: np.ndarray = X_k) -> np.ndarray:
+                    X = X_k + np.outer(shift(j), self.W[j])
+                    return np.asarray(self.model(X), dtype=float).reshape(-1)
+
+                for j, f in enumerate(pmap(predict, range(d))):
+                    if k == 1 and rep_var is not None:
+                        rep_var[j] = ((sums[j] - f) ** 2).reshape(B, n).mean(axis=0) / 4
+                    sums[j] += f
+
+        return np.column_stack(
+            [
+                self._ueif_from_counterfactuals(
+                    y_pred,
+                    (sums[j] / n_draws).reshape(B, n),
+                    method=self.method,
+                    y_true=y_true,
+                    base_var=base_var,
+                    rep_var=None if rep_var is None else rep_var[j],
+                )
+                for j in range(d)
+            ]
+        )
 
     def _auto_epsilon(self, X_centered: np.ndarray) -> float:
         """
         Auto-tune epsilon from latent geometry.
 
         Estimates pairwise distances in Gaussian-whitened latent space and
-        uses a conservative shrinkage factor to avoid over-smoothing.
+        uses a conservative shrinkage factor to avoid over-smoothing.  The
+        subsample of at most 1000 rows has a fixed seed, so epsilon depends on
+        the data only and explainers that differ in ``random_state`` (such as
+        :class:`Crossfitting` folds) share it.
         """
         if X_centered.shape[0] < 2:
             return self.epsilon
 
         Z_ref = X_centered @ self.L_inv
         n = min(1000, Z_ref.shape[0])
-        rng = np.random.default_rng(self.random_state)
+        rng = np.random.default_rng(0)
         idx = rng.choice(Z_ref.shape[0], size=n, replace=False)
         Z_sub = Z_ref[idx]
 
@@ -235,5 +365,5 @@ class EOTExplainer(Explainer):
         return max(eps, 1e-3)
 
     def _decode_from_Z(self, Z: np.ndarray) -> np.ndarray:
-        """Decode Z to X using the population coupling: E[X | Z] ≈ Z @ L_z + mean."""
-        return np.asarray(Z) @ self.L_z + self.mean
+        """Decode Z to X with the barycentric projection E[X | Z] = Z @ W + mean."""
+        return np.asarray(Z) @ self.W + self.mean

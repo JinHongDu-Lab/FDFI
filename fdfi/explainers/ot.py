@@ -3,8 +3,9 @@ Optimal-transport (Gaussian) DFI explainer.
 """
 
 import numpy as np
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Tuple
 from .base import Explainer
+from ..results import ExplanationResults
 
 
 class OTExplainer(Explainer):
@@ -41,7 +42,9 @@ class OTExplainer(Explainer):
         * ``'permutation'`` – permute the test-set latent values.
         * ``'normal'`` – draw i.i.d. standard normal samples.
     random_state : int, default=0
-        Seed for the random number generator used in resampling.
+        Seed for the counterfactual draws.  Each call draws from a new stream
+        spawned from it, so repeated calls (e.g. on chunks of a test set) are
+        independent and the sequence of calls is reproducible.
     method : {'cpi', 'scpi'}, default='cpi'
         Counterfactual resampling estimator:
 
@@ -104,11 +107,11 @@ class OTExplainer(Explainer):
     >>>
     >>> explainer = OTExplainer(model, data=X_bg, nsamples=50)
     >>> results = explainer(X_test)
-    >>> print(results["phi_X"])        # global importance, X-space
-    >>> print(results["phi_Z"])        # global importance, Z-space
+    >>> print(results.phi_X)        # global importance, X-space
+    >>> print(results.phi_Z)        # global importance, Z-space
     >>>
     >>> ci = explainer.conf_int(alpha=0.05, alternative="greater")
-    >>> summary_bar(results["phi_X"], results["se_X"], show=False)
+    >>> summary_bar(results.phi_X, results.se_X, show=False)
     """
     def __init__(
         self,
@@ -125,74 +128,54 @@ class OTExplainer(Explainer):
         self.nsamples = nsamples
         self.regularize = kwargs.get("regularize", 1e-6)
         self.sampling_method = sampling_method
-        self.random_state = random_state if random_state is not None else 0
+        self._set_random_state(random_state)
         self.method = method
 
-       
-        self.mean = np.mean(data, axis=0, keepdims=True)
-        
-        self.cov = np.cov(data, rowvar=False, ddof=0)
-        self.cov = (self.cov + self.cov.T) / 2  
-
-      
-        eigenvals, eigenvecs = np.linalg.eigh(self.cov)
-        eigenvals = np.maximum(eigenvals, self.regularize) 
-
-        
-        self.L = eigenvecs @ np.diag(eigenvals**0.5) @ eigenvecs.T
-       
-        self.L_inv = eigenvecs @ np.diag(eigenvals**-0.5) @ eigenvecs.T
-
-        self.Z_full = (data - self.mean) @ self.L_inv
+        self._whiten(data)
+        self._set_pool(data)
         self._compute_diagnostics(report_title="OTExplainer")
 
-    def __call__(self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any) -> np.ndarray:
-       
-        n, d = X.shape
+    def _set_pool(self, X: np.ndarray) -> None:
+        self.Z_full = (X - self.mean) @ self.L_inv
+
+    def __call__(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any
+    ) -> ExplanationResults:
+        """Compute feature importance for new observations.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Input data, shape (n_samples, n_features).
+        y : numpy.ndarray, optional
+            True outcomes. When omitted, use the label-free divergence form.
+        **kwargs : dict
+            Additional parameters for API compatibility.
+
+        Returns
+        -------
+        ExplanationResults
+            Dict-compatible importance and uncertainty estimates in X- and
+            Z-space, with attribute access, ``importance()``, ``to_frame()``
+            and ``top_features()``.
+        """
+        return self._explain(X, y)
+
+    def _ueifs(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Per-sample UEIFs ``(ueifs_X, ueifs_Z)`` for ``X``; shared with
+        :class:`Crossfitting`."""
         Z = (X - self.mean) @ self.L_inv
-        
-    
-        y_pred = self.model(X)
-        
-       
-        # get per-sample UEIFs in latent space (n_samples, n_features)
-        ueifs_Z = self._phi_Z(Z, y_pred, y_true=y)
-
-        # Jacobian sensitivity matrix (constant for linear mapping)
-        H = self.L ** 2
-        # Map latent-space UEIFs back to original X-space per-sample
-        ueifs_X = ueifs_Z @ H.T
-
-        # Store per-sample UEIFs for group_importance()
-        self.ueifs_X = ueifs_X
-        self.ueifs_Z = ueifs_Z
-
-        # Aggregate to get mean importance and uncertainty (std) across samples
-        n = ueifs_X.shape[0]
-        ddof = 1 if n > 1 else 0
-        phi_X = np.mean(ueifs_X, axis=0)
-        std_X = np.std(ueifs_X, axis=0)
-        se_X = np.std(ueifs_X, axis=0, ddof=ddof) / np.sqrt(n)
-
-        phi_Z = np.mean(ueifs_Z, axis=0)
-        std_Z = np.std(ueifs_Z, axis=0)
-        se_Z = np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n)
-
-        results = {
-            "phi_X": phi_X,
-            "std_X": std_X,
-            "se_X": se_X,
-            "phi_Z": phi_Z,
-            "std_Z": std_Z,
-            "se_Z": se_Z,
-        }
-        self._cache_results(results, n)
-        return results
+        y_pred = np.asarray(self.model(X), dtype=float)
+        ueifs_Z = self._phi_Z(Z, y_pred, self._call_key(), y_true=y)
+        return ueifs_Z @ (self.L ** 2).T, ueifs_Z
 
     def _phi_Z(
         self,
         Z: np.ndarray,
         y_pred: np.ndarray,
+        key: int,
         y_true: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Per-sample uncentered EIF in Z-space via counterfactual resampling.
@@ -203,13 +186,14 @@ class OTExplainer(Explainer):
         average per-resample loss difference; SCPI applies the loss after
         averaging the counterfactual predictions. With the default squared-
         error loss and no ``y_true``, the reference is the baseline prediction.
+        Feature ``j`` draws from the stream ``[key, j]`` (see :meth:`_call_key`).
         """
         n, d = Z.shape
         ueifs_Z = np.zeros((n, d))
         
         for j in range(d):
 
-            rng = np.random.default_rng(self.random_state + j)
+            rng = np.random.default_rng([key, j])
             
             # Z_tilde: (nsamples, n, d)
             Z_tilde = np.tile(Z[None, :, :], (self.nsamples, 1, 1))

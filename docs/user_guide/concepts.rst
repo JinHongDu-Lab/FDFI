@@ -64,10 +64,11 @@ DFI provides two main approaches:
 
 **Entropic OT (EOTExplainer)**
 
-- Relaxes Gaussian assumption using Sinkhorn algorithm
+- Closed-form Gaussian entropic coupling: :math:`Z \mid X \sim N(s L^{-1}(X - \mu), (1 - s^2) I)`
+  with :math:`s = (\sqrt{\varepsilon^2 + 16} - \varepsilon)/4`
 - Adaptive regularization via median distance heuristic
-- Supports mixed data types (continuous + categorical)
-- Better for non-Gaussian or mixed-type data
+- Latent regression averaged over the coupling, with Monte Carlo corrections
+- Importance shrinks with :math:`\varepsilon`; :math:`\varepsilon = 0` recovers Gaussian OT
 
 Flow-Disentangled Feature Importance (Flow-DFI)
 -----------------------------------------------
@@ -90,6 +91,10 @@ where :math:`\tilde{X}_b^{(j)} = T^{-1}(\tilde{Z}_b^{(j)})` and
 :math:`\tilde{Z}_b^{(j)}` has the j-th component replaced with sample b, and
 :math:`L` is a per-sample loss.
 
+With outcomes and the squared-error or Brier loss, CPI adds the orthogonalizing
+term :math:`\big(Y-f(X)\big)\big(f(X)-\mathbb{E}_b[f(\tilde X_b)]\big)`, which
+removes the first-order dependence on the regression error.
+
 **SCPI (Sobol-CPI)**
 
 Averages the counterfactual predictions first, then applies the loss:
@@ -102,7 +107,9 @@ Averages the counterfactual predictions first, then applies the loss:
 The factor one half follows the normalized CPI convention of the FDFI paper;
 conventional CPI without it is twice as large. For the same finite Monte Carlo
 draws and squared-error loss, the exact relation is
-:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]`.
+:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]+2\big(Y-f(X)\big)\big(f(X)-\mathbb{E}_b[f(\tilde X_b)]\big)`;
+the last term is absent in the label-free form. ``EOTExplainer`` further
+removes the Monte Carlo bias of its averaged predictions.
 Under an exact disentangling map and a Bayes predictor, normalized CPI and the
 infinite-resample SCPI target the same Sobol total-order quantity. At finite
 :math:`B`, the uncorrected SCPI plug-in has Monte Carlo inflation; in the ideal
