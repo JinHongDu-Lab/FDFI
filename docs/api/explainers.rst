@@ -191,13 +191,17 @@ normalizing flows. It supports both CPI (Conditional Permutation Importance)
 and SCPI (Sobol-CPI), using the definitions in the FDFI paper:
 
 - **CPI**: Average per-resample loss differences and multiply by one half:
-  :math:`\tfrac12\mathbb{E}_b[L(Y,f(\tilde X_b))-L(Y,f(X))]`.
+  :math:`\tfrac12\mathbb{E}_b[L(Y,f(\tilde X_b))-L(Y,f(X))]`,
+  plus the orthogonalizing term
+  :math:`\big(Y-f(X)\big)\big(f(X)-\mathbb{E}_b[f(\tilde X_b)]\big)` with
+  outcomes and the squared-error or Brier loss.
 - **SCPI**: Average the counterfactual predictions before applying the loss:
   :math:`L(Y,\mathbb{E}_b[f(\tilde X_b)])-L(Y,f(X))`.
 
 Both use the configurable ``loss`` (default squared error). For the same finite
 Monte Carlo draws and squared-error loss,
-:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]`.
+:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]+2\big(Y-f(X)\big)\big(f(X)-\mathbb{E}_b[f(\tilde X_b)]\big)`,
+without the last term in the label-free form.
 With an exact disentangling map and a Bayes predictor, CPI and infinite-resample
 SCPI estimate the same population importance. Conventional CPI in the broader
 CPI literature omits the one-half normalization and is therefore twice the

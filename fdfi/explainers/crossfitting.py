@@ -3,12 +3,10 @@ Cross-fitted DFI explainer for valid inference at small sample sizes.
 """
 
 import numpy as np
-from typing import Optional, Union, Callable, Any, Tuple
+from typing import Optional, Union, Callable, Any
 from .base import Explainer
 from ..results import ExplanationResults
 from .ot import OTExplainer
-from .eot import EOTExplainer
-from .flow import FlowExplainer
 
 
 class Crossfitting(Explainer):
@@ -42,9 +40,10 @@ class Crossfitting(Explainer):
         splitter so that fold assignment preserves class distribution.
     groups : array-like of shape (n,), optional
         Group labels for group-aware splitters (``GroupKFold``, etc.).
-    random_state : int or None, default=None
-        Random seed for the default ``KFold`` splitter (when *cv* is int)
-        and passed to child explainers.
+    random_state : int or None, default=0
+        Seed for the default ``KFold`` splitter (when *cv* is int) and for the
+        fold explainers, each of which gets its own seed spawned from it.
+        ``None`` draws fresh entropy, so results are not reproducible.
     **kwargs : dict
         Additional keyword arguments forwarded to each split's explainer
         constructor (e.g., nsamples, epsilon, sampling_method, num_steps).
@@ -82,7 +81,7 @@ class Crossfitting(Explainer):
         y: Optional[np.ndarray] = None,
         groups: Optional[np.ndarray] = None,
         cv_kwargs: Optional[dict] = None,
-        random_state: Optional[int] = None,
+        random_state: Optional[int] = 0,
         **kwargs: Any,
     ):
         # Remove fit_flow from kwargs before passing to super() and child explainers
@@ -122,77 +121,6 @@ class Crossfitting(Explainer):
                 f"got {type(cv)}"
             )
         return cv
-
-    # ------------------------------------------------------------------
-    # Per-sample UEIF extraction (dispatch by explainer type)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _get_persample_ueifs(
-        explainer: "Explainer",
-        X_test: np.ndarray,
-        y_test: Optional[np.ndarray] = None,
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Compute per-sample UEIFs in both Z- and X-space for *X_test*
-        using the fitted *explainer*.
-
-        Parameters
-        ----------
-        y_test : (n_test,) array or None
-            True outcomes for X_test.  When provided to EOTExplainer, uses
-            the DFI formula ``(y - ȳ_{-j})² - (y - ŷ)²`` for proper
-            null-feature thresholding.
-
-        Returns
-        -------
-        ueifs_X : numpy.ndarray, shape (n_test, d)
-        ueifs_Z : numpy.ndarray, shape (n_test, d)
-        """
-        if isinstance(explainer, FlowExplainer):
-            Z = explainer._encode_to_Z(X_test)
-            X_hat = explainer._decode_to_X(Z)
-            y_pred = explainer.model(X_hat)
-            ueifs_cpi, ueifs_scpi = explainer._phi_Z(Z, y_pred, y_true=y_test)
-            jacobian_mode = explainer.kwargs.get("jacobian_mode", "average")
-            n_jac = explainer.kwargs.get("jacobian_n_samples", 100)
-            n_test = Z.shape[0]
-            if jacobian_mode == "per_sample":
-                H_batch = explainer.flow_model.Jacobi_Batch(Z)   # (n, d, d)
-                H_sq_batch = H_batch ** 2
-                if explainer.method == "scpi":
-                    ueifs_Z = ueifs_scpi
-                    ueifs_X = np.einsum("ilk,ik->il", H_sq_batch, ueifs_scpi)
-                else:
-                    ueifs_Z = ueifs_cpi
-                    ueifs_X = np.einsum("ilk,ik->il", H_sq_batch, ueifs_cpi)
-            elif jacobian_mode == "avg_sq":
-                n_est = min(n_test, n_jac)
-                H_batch = explainer.flow_model.Jacobi_Batch(Z[:n_est])  # (n_est, d, d)
-                H_sq_avg = (H_batch ** 2).mean(axis=0)                   # (d, d)
-                if explainer.method == "scpi":
-                    ueifs_Z = ueifs_scpi
-                else:
-                    ueifs_Z = ueifs_cpi
-                ueifs_X = ueifs_Z @ H_sq_avg.T
-            else:
-                H = explainer._compute_jacobian(Z)
-                H_sq = H ** 2
-                if explainer.method == "scpi":
-                    ueifs_Z = ueifs_scpi
-                else:
-                    ueifs_Z = ueifs_cpi
-                ueifs_X = ueifs_Z @ H_sq.T
-        elif isinstance(explainer, (EOTExplainer, OTExplainer)):
-            ueifs_X, ueifs_Z = explainer._ueifs(X_test, y_test)
-        else:
-            # Fallback: call the explainer and replicate aggregated scores
-            results = explainer(X_test)
-            n = X_test.shape[0]
-            ueifs_X = np.tile(results["phi_X"], (n, 1))
-            ueifs_Z = np.tile(results["phi_Z"], (n, 1))
-
-        return ueifs_X, ueifs_Z
 
     # ------------------------------------------------------------------
     # __call__
@@ -285,9 +213,8 @@ class Crossfitting(Explainer):
             # Build fold explainer on FULL data so that covariance / whitening
             # uses all n observations (matches refit_cov=False in the reference).
             # This avoids rank-deficiency when d > n_train (half the data).
-            # Diagnostics are suppressed because ODE encoding of all n samples
-            # (including normal and tight-tolerance variants) would be
-            # immediately overwritten when we restrict Z_full below.
+            # Diagnostics are suppressed because the latent pool of all n
+            # samples is immediately replaced by the training fold's below.
             fold_kwargs = {"compute_diagnostics": False}
             fold_kwargs.update(self.cf_kwargs)
             fold_exp = self.explainer_class(
@@ -296,31 +223,13 @@ class Crossfitting(Explainer):
                 random_state=int(seeds.spawn(1)[0].generate_state(1)[0]),
                 **fold_kwargs,
             )
-            # Restrict resampling pool to training fold only.
-            if isinstance(fold_exp, EOTExplainer):
-                # EOT: latent draws from the coupling for the training fold
-                fold_exp.Z_full = fold_exp._latent(
-                    (self.data[train_idx] - fold_exp.mean) @ fold_exp.L_inv,
-                    np.random.default_rng([fold_exp.random_state, 11]),
-                )
-            elif hasattr(fold_exp, "_encode_to_Z"):
-                # FlowExplainer: encode training-fold samples through the flow.
-                # The flow itself was trained on all data (full n); only the
-                # resampling pool is restricted to in-fold rows so that
-                # counterfactual draws respect the cross-fitting split.
-                # Z_full may be None here (skipped _encode_background above)
-                # — that is expected; we set it now.
-                fold_exp.Z_full = fold_exp._encode_to_Z(self.data[train_idx])
-            elif hasattr(fold_exp, "Z_full") and fold_exp.Z_full is not None:
-                # OT / generic linear map (mean + L_inv attributes)
-                fold_exp.Z_full = (
-                    (self.data[train_idx] - fold_exp.mean) @ fold_exp.L_inv
-                )
+            # Counterfactuals resample from the training fold only.
+            fold_exp._set_pool(self.data[train_idx])
             self.fold_explainers.append(fold_exp)
 
             X_test = self.data[test_idx]
             y_test = self.y[test_idx] if self.y is not None else None
-            ueifs_X_fold, ueifs_Z_fold = self._get_persample_ueifs(fold_exp, X_test, y_test=y_test)
+            ueifs_X_fold, ueifs_Z_fold = fold_exp._ueifs(X_test, y_test)
 
             # Accumulate (handles overlapping test sets by averaging later)
             for local_i, global_i in enumerate(test_idx):

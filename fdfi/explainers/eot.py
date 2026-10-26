@@ -4,6 +4,7 @@ Entropic optimal-transport (EOT) DFI explainer.
 
 import os
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 
 import numpy as np
 from typing import Optional, Callable, Any, Tuple
@@ -89,14 +90,17 @@ class EOTExplainer(Explainer):
         EOT regularization parameter on the whitened scale.  ``epsilon = 0``
         gives the Gaussian OT map.
     auto_epsilon : bool, default=False
-        If True, set ε from a median-distance heuristic in whitened space.
+        If True, set ε from a median-distance heuristic in whitened space.  It
+        depends on ``data`` only, not on ``random_state``.
     sampling_method : str, default='resample'
         How to draw counterfactual Z_j values:
         - 'resample': sample from the background Z pool
         - 'permutation': permute within the test set
         - 'normal': sample from N(0, 1)
     random_state : int, default=0
-        Random seed for reproducibility.
+        Seed for the latent pool and the Monte Carlo draws.  Each call draws
+        from a new stream spawned from it, so repeated calls (e.g. on chunks of
+        a test set) are independent and the sequence of calls is reproducible.
     method : {'cpi', 'scpi'}, default='cpi'
         Importance estimator (see above).
     n_eta : int, default=10
@@ -106,12 +110,13 @@ class EOTExplainer(Explainer):
         Number of features scored in parallel threads; -1 uses all CPUs.
         Each thread holds a few arrays of ``nsamples * n_test * d`` floats,
         and ``model`` must be safe to call from several threads (scikit-learn
-        ``predict`` is).  Results do not depend on ``n_jobs``.
+        ``predict`` is).  With ``n_jobs=1`` the model runs on the calling
+        thread.  Results do not depend on ``n_jobs``.
     **kwargs : dict
         Extra arguments forwarded to the base Explainer.
     """
     #: Attributes shown in the printed representation.
-    _REPR_PARAMS = Explainer._REPR_PARAMS + ("n_eta",)
+    _REPR_PARAMS = Explainer._REPR_PARAMS + ("epsilon", "auto_epsilon", "n_eta")
 
     def __init__(
         self,
@@ -137,18 +142,15 @@ class EOTExplainer(Explainer):
         self.epsilon = epsilon
         self.auto_epsilon = auto_epsilon
         self.sampling_method = sampling_method
-        self.random_state = random_state if random_state is not None else 0
+        self._set_random_state(random_state)
         self.n_eta = n_eta
         self.n_jobs = n_jobs
         self.regularize = kwargs.get("regularize", 1e-6)
 
         # ── Gaussian whitening ───────────────────────────────────────────
         self._whiten(data)
-        X_centered = data - self.mean
-        X_whitened = X_centered @ self.L_inv
-
         if self.auto_epsilon:
-            self.epsilon = self._auto_epsilon(X_centered)
+            self.epsilon = self._auto_epsilon(data - self.mean)
 
         # ── Gaussian EOT coupling ────────────────────────────────────────
         self.s_fwd = gaussian_eot_scale(self.epsilon)
@@ -157,8 +159,12 @@ class EOTExplainer(Explainer):
         self.W = self.s_fwd * self.L
 
         # ── Latent pool for resampling and diagnostics ───────────────────
-        self.Z_full = self._latent(X_whitened, np.random.default_rng([self.random_state, 11]))
+        self._set_pool(data)
         self._compute_diagnostics(report_title="EOTExplainer")
+
+    def _set_pool(self, X: np.ndarray) -> None:
+        rng = np.random.default_rng([self.random_state, 11])
+        self.Z_full = self._latent((X - self.mean) @ self.L_inv, rng)
 
     def _latent(self, X_w: np.ndarray, rng: np.random.Generator) -> np.ndarray:
         """Draw latent features from the forward conditional ``Z | X_w``."""
@@ -184,8 +190,9 @@ class EOTExplainer(Explainer):
             X_w = self.s_fwd * Z + self.sigma_fwd * rng.standard_normal(Z.shape)
             draws[k] = np.asarray(self.model(X_w @ self.L + self.mean), dtype=float)
         mean = draws.mean(axis=0)
-        var = draws.var(axis=0, ddof=1) / n_draws if n_draws > 1 else np.zeros_like(mean)
-        return mean, var
+        if n_draws == 1:
+            return mean, np.zeros_like(mean)
+        return mean, draws.var(axis=0, ddof=1) / n_draws
 
     def __call__(
         self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any
@@ -219,15 +226,15 @@ class EOTExplainer(Explainer):
         ``eta(Z)`` and scores the counterfactuals.  Shared with
         :class:`Crossfitting`.
         """
-        rng = np.random.default_rng([self.random_state, 12])
-        Z = self._latent((X - self.mean) @ self.L_inv, rng)
-        ueifs_Z = self._phi_Z(Z, rng, y_true=y)
+        key = self._call_key()
+        Z = self._latent((X - self.mean) @ self.L_inv, np.random.default_rng([key, 12]))
+        ueifs_Z = self._phi_Z(Z, key, y_true=y)
         return ueifs_Z @ (self.W ** 2).T, ueifs_Z
 
     def _phi_Z(
         self,
         Z: np.ndarray,
-        rng: np.random.Generator,
+        key: int,
         y_true: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Per-sample uncentered UEIF in latent space.
@@ -249,8 +256,8 @@ class EOTExplainer(Explainer):
         ----------
         Z : (n, d) array
             Latent features.
-        rng : numpy.random.Generator
-            Generator for the baseline's coupling draws.
+        key : int
+            Seed of this call's Monte Carlo streams (see :meth:`_call_key`).
         y_true : (n,) array or None
             Outcomes.  When provided, the loss-difference (DFI) form is used;
             when omitted, the label-free divergence form.
@@ -261,6 +268,7 @@ class EOTExplainer(Explainer):
         coupled = self.method == "scpi" and noisy
         y_pred = base_var = None
         if not coupled:
+            rng = np.random.default_rng([key, 15])
             y_pred, base_var = self._eta(Z, rng, self.n_eta)
         # A deterministic coupling needs a single draw.
         n_draws = 1
@@ -269,7 +277,7 @@ class EOTExplainer(Explainer):
 
         def shift(j: int) -> np.ndarray:
             """``Z~_j - Z_j`` for the B replicates, flattened; seeded per feature."""
-            rng = np.random.default_rng([self.random_state, 13, j])
+            rng = np.random.default_rng([key, 13, j])
             if self.sampling_method == "resample":
                 new = self.Z_full[rng.choice(self.Z_full.shape[0], size=(B, n)), j]
             elif self.sampling_method == "permutation":
@@ -287,53 +295,64 @@ class EOTExplainer(Explainer):
         # replicates and points), so the d x d product runs once per draw.
         X_obs = np.tile(Z @ self.W + self.mean, (B, 1))
         sums = np.zeros((d, B * n))
-        sumsq = np.zeros((d, B * n)) if n_draws == 2 else None
-        n_jobs = (os.cpu_count() or 1) if self.n_jobs == -1 else max(int(self.n_jobs), 1)
-        with ThreadPoolExecutor(max_workers=min(n_jobs, d)) as pool:
+        # Monte Carlo variance of each replicate's two-draw mean, (f1 - f2)^2 / 4,
+        # averaged over replicates.
+        rep_var = np.zeros((d, n)) if n_draws == 2 else None
+        n_jobs = int(self.n_jobs)
+        if n_jobs == -1:
+            n_jobs = os.cpu_count() or 1
+        n_jobs = min(max(n_jobs, 1), d)
+        with ThreadPoolExecutor(n_jobs) if n_jobs > 1 else nullcontext() as pool:
+            pmap = map if pool is None else pool.map
             for k in range(n_draws):
                 X_k = X_obs
                 if noisy:
-                    draw = np.random.default_rng([self.random_state, 14, k])
-                    X_k = X_obs + self.sigma_fwd * draw.standard_normal(X_obs.shape) @ self.L
+                    draw = np.random.default_rng([key, 14, k])
+                    xi = draw.standard_normal(X_obs.shape)
+                    X_k = X_obs + self.sigma_fwd * xi @ self.L
                 if coupled:
-                    y_pred = np.asarray(self.model(X_k), dtype=float).reshape(B, n).mean(axis=0)
+                    y_pred = np.asarray(self.model(X_k), dtype=float)
+                    y_pred = y_pred.reshape(B, n).mean(axis=0)
 
                 def predict(j: int, X_k: np.ndarray = X_k) -> np.ndarray:
                     X = X_k + np.outer(shift(j), self.W[j])
                     return np.asarray(self.model(X), dtype=float).reshape(-1)
 
-                for j, f in enumerate(pool.map(predict, range(d))):
+                for j, f in enumerate(pmap(predict, range(d))):
+                    if k == 1 and rep_var is not None:
+                        rep_var[j] = ((sums[j] - f) ** 2).reshape(B, n).mean(axis=0) / 4
                     sums[j] += f
-                    if sumsq is not None:
-                        sumsq[j] += f * f
 
-        # Monte Carlo variance of each replicate's two-draw mean, (f1 - f2)^2 / 4.
-        rep_var = None if sumsq is None else (2 * sumsq - sums ** 2) / 4
-        return np.column_stack([
-            self._ueif_from_counterfactuals(
-                y_pred,
-                (sums[j] / n_draws).reshape(B, n),
-                method=self.method,
-                y_true=y_true,
-                base_var=base_var,
-                rep_var=None if rep_var is None else rep_var[j].reshape(B, n),
-            )
-            for j in range(d)
-        ])
+        return np.column_stack(
+            [
+                self._ueif_from_counterfactuals(
+                    y_pred,
+                    (sums[j] / n_draws).reshape(B, n),
+                    method=self.method,
+                    y_true=y_true,
+                    base_var=base_var,
+                    rep_var=None if rep_var is None else rep_var[j],
+                )
+                for j in range(d)
+            ]
+        )
 
     def _auto_epsilon(self, X_centered: np.ndarray) -> float:
         """
         Auto-tune epsilon from latent geometry.
 
         Estimates pairwise distances in Gaussian-whitened latent space and
-        uses a conservative shrinkage factor to avoid over-smoothing.
+        uses a conservative shrinkage factor to avoid over-smoothing.  The
+        subsample of at most 1000 rows has a fixed seed, so epsilon depends on
+        the data only and explainers that differ in ``random_state`` (such as
+        :class:`Crossfitting` folds) share it.
         """
         if X_centered.shape[0] < 2:
             return self.epsilon
 
         Z_ref = X_centered @ self.L_inv
         n = min(1000, Z_ref.shape[0])
-        rng = np.random.default_rng(self.random_state)
+        rng = np.random.default_rng(0)
         idx = rng.choice(Z_ref.shape[0], size=n, replace=False)
         Z_sub = Z_ref[idx]
 

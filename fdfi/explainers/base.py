@@ -139,13 +139,41 @@ class Explainer:
         self.L = (eigenvecs * eigenvals ** 0.5) @ eigenvecs.T
         self.L_inv = (eigenvecs * eigenvals ** -0.5) @ eigenvecs.T
 
-    def _explain(self, X: np.ndarray, y: Optional[np.ndarray]) -> ExplanationResults:
-        """Shared ``__call__`` of the Gaussian-geometry explainers."""
-        ueifs_X, ueifs_Z = self._ueifs(X, y)
-        self.ueifs_X, self.ueifs_Z = ueifs_X, ueifs_Z
-        n = X.shape[0]
+    def _set_random_state(self, random_state: Optional[int]) -> None:
+        """Store ``random_state`` (``None`` means 0) and the seed sequence from
+        which :meth:`_call_key` spawns each call's Monte Carlo streams."""
+        self.random_state = 0 if random_state is None else random_state
+        self._seeds = np.random.SeedSequence(self.random_state)
+
+    def _call_key(self) -> int:
+        """Seed for one call's Monte Carlo draws.
+
+        Each call spawns a new key from ``random_state``, so successive calls
+        (e.g. on chunks of a test set) use independent draws, while a sequence
+        of calls is reproducible.
+        """
+        return int(self._seeds.spawn(1)[0].generate_state(1)[0])
+
+    def _set_pool(self, X: np.ndarray) -> None:
+        """Set the latent pool ``Z_full`` that counterfactuals resample from to
+        the latent features of ``X``; :class:`Crossfitting` restricts it to the
+        training fold."""
+        raise NotImplementedError
+
+    def _ueifs(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Per-sample UEIFs ``(ueifs_X, ueifs_Z)`` for ``X``, each of shape
+        (n, d); shared by ``__call__`` and :class:`Crossfitting`."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _moments(ueifs_X: np.ndarray, ueifs_Z: np.ndarray) -> dict:
+        """Importance, standard deviation and standard error of per-sample
+        UEIFs in X- and Z-space."""
+        n = ueifs_X.shape[0]
         ddof = 1 if n > 1 else 0
-        results = {
+        return {
             "phi_X": np.mean(ueifs_X, axis=0),
             "std_X": np.std(ueifs_X, axis=0),
             "se_X": np.std(ueifs_X, axis=0, ddof=ddof) / np.sqrt(n),
@@ -153,6 +181,12 @@ class Explainer:
             "std_Z": np.std(ueifs_Z, axis=0),
             "se_Z": np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n),
         }
+
+    def _explain(self, X: np.ndarray, y: Optional[np.ndarray]) -> ExplanationResults:
+        """Shared ``__call__``: aggregate the per-sample UEIFs of ``X``."""
+        self.ueifs_X, self.ueifs_Z = self._ueifs(X, y)
+        results = self._moments(self.ueifs_X, self.ueifs_Z)
+        n = X.shape[0]
         self._cache_results(results, n)
         return ExplanationResults(results, explainer_name=type(self).__name__, n=n)
 
@@ -160,14 +194,7 @@ class Explainer:
     # Printing
     # ------------------------------------------------------------------
     #: Attributes shown in the printed representation when present.
-    _REPR_PARAMS = (
-        "method",
-        "nsamples",
-        "sampling_method",
-        "epsilon",
-        "auto_epsilon",
-        "random_state",
-    )
+    _REPR_PARAMS = ("method", "nsamples", "sampling_method", "random_state")
 
     def _repr_loss(self) -> str:
         loss = getattr(self, "loss", None)
@@ -295,8 +322,9 @@ class Explainer:
             used.
         base_var : ndarray of shape (n,), optional
             Monte Carlo variance of ``y_pred``; None when ``y_pred`` is exact.
-        rep_var : ndarray of shape (B, n), optional
-            Monte Carlo variance of each counterfactual prediction (``'cpi'``).
+        rep_var : ndarray of shape (n,), optional
+            Monte Carlo variance of the counterfactual predictions, averaged
+            over the ``B`` replicates (``'cpi'``).
 
         Returns
         -------
@@ -330,7 +358,7 @@ class Explainer:
             if squared:
                 # Each squared replicate loss carries the replicate's Monte
                 # Carlo variance.
-                perturbed = perturbed - (v0 if rep_var is None else rep_var.mean(axis=0))
+                perturbed = perturbed - (v0 if rep_var is None else rep_var)
             score = 0.5 * (perturbed - base)
             if squared and y_true is not None:
                 # Orthogonalized CPI: (y - ŷ)(ŷ - mean_b ŷ_b) removes the
@@ -736,7 +764,7 @@ class Explainer:
             )
         """
         results = self.conf_int(alpha=alpha, **kwargs)
-        text = self._format_summary(results, alpha, print_output=False)
+        text = self._format_summary(results, alpha)
         if print_output:
             print(text)
             return None
@@ -828,7 +856,7 @@ class Explainer:
         }
 
 
-    def _format_summary(self, results: dict, alpha: float, print_output: bool = True) -> str:
+    def _format_summary(self, results: dict, alpha: float) -> str:
         lines = []
         lines.append("=" * 78)
         lines.append("Feature Importance Results")
@@ -891,10 +919,7 @@ class Explainer:
         lines.append("Signif. codes:  0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1")
         lines.append("=" * 78)
 
-        output = "\n".join(lines)
-        if print_output:
-            print(output)
-        return output
+        return "\n".join(lines)
 
     def _log(self, message: str, level: str = "INFO") -> None:
         """Consistent, verbosity-aware logging with unified style."""

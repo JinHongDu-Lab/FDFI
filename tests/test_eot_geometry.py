@@ -65,6 +65,19 @@ class TestCoupling:
         assert np.array_equal(r1["phi_Z"], r4["phi_Z"])
         assert np.array_equal(r1["se_X"], r4["se_X"])
 
+    def test_model_runs_on_calling_thread_with_one_job(self):
+        import threading
+
+        X = np.random.default_rng(0).standard_normal((40, 3))
+        threads = set()
+
+        def model(x):
+            threads.add(threading.get_ident())
+            return x[:, 0]
+
+        EOTExplainer(model, X, nsamples=2, compute_diagnostics=False)(X)
+        assert threads == {threading.get_ident()}
+
     def test_options_are_validated(self):
         X = np.random.default_rng(0).standard_normal((50, 2))
         assert EOTExplainer(lambda x: x[:, 0], X, method="SCPI").method == "scpi"
@@ -110,7 +123,7 @@ class TestMonteCarloCorrections:
         y = rng.standard_normal(n) if labelled else None
         y_tilde = rng.standard_normal((B, n))      # null feature, variance 1
         cpi = explainer._ueif_from_counterfactuals(
-            np.zeros(n), y_tilde, method="cpi", y_true=y, rep_var=np.ones((B, n))
+            np.zeros(n), y_tilde, method="cpi", y_true=y, rep_var=np.ones(n)
         )
         assert abs(cpi.mean()) < 0.01
 
@@ -188,3 +201,17 @@ class TestCrossfitting:
         s2 = gaussian_eot_scale(1.0) ** 2
         assert abs(res["phi_Z"][0] - s2) < 3 * res["se_Z"][0]
         assert np.all(np.abs(res["phi_Z"][1:]) < 0.1)
+
+    def test_folds_share_auto_epsilon(self):
+        from fdfi.explainers import Crossfitting
+
+        X = np.random.default_rng(3).standard_normal((1200, 2))
+        cf = Crossfitting(
+            lambda x: x[:, 0], X, explainer_class=EOTExplainer, cv=2,
+            auto_epsilon=True, nsamples=2,
+        )
+        cf()
+        eps = [fold.epsilon for fold in cf.fold_explainers]
+        seeds = [fold.random_state for fold in cf.fold_explainers]
+        assert eps[0] == eps[1]
+        assert seeds[0] != seeds[1]

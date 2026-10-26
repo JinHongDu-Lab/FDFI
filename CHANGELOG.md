@@ -25,7 +25,19 @@
   ``random_state``, so ``EOTExplainer`` gave rows in different folds identical
   coupling noise and counterfactual draws, and the standard errors were too
   small.  Each fold now draws from its own seed, spawned from
-  ``random_state``.
+  ``random_state``, whose default is now 0, so cross-fitted results are
+  reproducible by default.
+- **Repeated calls reused the same draws**: every call of ``OTExplainer``,
+  ``EOTExplainer`` or ``FlowExplainer`` restarted the counterfactual and
+  coupling streams from ``random_state``, so scoring a test set in equal-size
+  chunks gave correlated per-sample scores and too small pooled standard
+  errors.  Each call now draws from a new stream spawned from
+  ``random_state``; a sequence of calls stays reproducible.
+- ``EOTExplainer(auto_epsilon=True)`` chooses epsilon from a subsample with a
+  fixed seed, so it depends on the data only and all ``Crossfitting`` folds
+  share it.
+- ``EOTExplainer(n_jobs=1)`` calls the model on the calling thread, so
+  thread-local settings such as ``torch.no_grad()`` apply.
 - The FAQ described Gower-distance options for ``EOTExplainer`` that do not
   exist, and the user guide and API page listed nonexistent ``target``,
   ``stochastic_transport`` and ``cost_metric`` options.
@@ -40,6 +52,10 @@
   single core; models that already use all cores gain little.
 
 ### Changed
+- ``Crossfitting`` obtains each fold's per-sample scores and training-fold
+  resampling pool through the explainers' shared ``_ueifs`` and ``_set_pool``
+  methods, and ``FlowExplainer`` computes its scores through the shared
+  aggregation; explainers without them are no longer accepted.
 - **Migration:** EOT scores computed with ``epsilon > 0`` change; at
   ``epsilon = 0`` the coupling is the Gaussian OT map. Attributed importance
   follows the barycentric projection, so for standardized features

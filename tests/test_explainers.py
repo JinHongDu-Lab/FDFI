@@ -160,7 +160,8 @@ class TestOTExplainer:
 
         Z = (X_test - explainer.mean) @ explainer.L_inv
         y_pred = exp3_model(X_test)
-        ueifs_Z = explainer._phi_Z(Z, y_pred)
+        explainer._set_random_state(explainer.random_state)  # key of the first call
+        ueifs_Z = explainer._phi_Z(Z, y_pred, explainer._call_key())
 
         ueifs_X = ueifs_Z @ (explainer.L ** 2).T
         phi_X = np.mean(ueifs_X, axis=0)
@@ -227,6 +228,7 @@ class TestEOTExplainer:
         assert np.all(np.isfinite(results["phi_X"]))
         assert np.all(results["std_X"] >= 0)
 
+        explainer._set_random_state(explainer.random_state)  # replay the first call
         ueifs_X, ueifs_Z = explainer._ueifs(X_test)
         phi_X = np.mean(ueifs_X, axis=0)
         std_X = np.std(ueifs_X, axis=0)
@@ -732,6 +734,33 @@ class TestCrossfittingInit:
         data = np.random.randn(50, 3)
         with pytest.raises(TypeError):
             Crossfitting(_simple_model, data, cv=3.14)
+
+
+class TestSeeding:
+    """Calls draw from fresh streams; a sequence of calls is reproducible."""
+
+    @pytest.mark.parametrize("cls", [OTExplainer, EOTExplainer])
+    def test_repeated_calls_draw_independently(self, cls):
+        X = np.random.default_rng(0).standard_normal((60, 3))
+        kw = dict(nsamples=5, compute_diagnostics=False)
+        first = cls(_simple_model, X, **kw)
+        second = cls(_simple_model, X, **kw)
+        a, b = first(X), first(X)
+        assert not np.array_equal(a["phi_Z"], b["phi_Z"])
+        assert np.array_equal(second(X)["phi_Z"], a["phi_Z"])
+        assert np.array_equal(second(X)["phi_Z"], b["phi_Z"])
+
+    def test_crossfitting_is_reproducible_by_default(self):
+        from sklearn.model_selection import KFold
+
+        X = np.random.default_rng(0).standard_normal((60, 3))
+        runs = [
+            Crossfitting(_simple_model, X, cv=KFold(3, shuffle=True, random_state=0),
+                         nsamples=5)()
+            for _ in range(2)
+        ]
+        assert np.array_equal(runs[0]["phi_Z"], runs[1]["phi_Z"])
+        assert np.array_equal(runs[0]["se_X"], runs[1]["se_X"])
 
 
 class TestCrossfittingWithOT:

@@ -164,6 +164,10 @@ underlying distribution structure
      \phi_j^{CPI} = \frac12 E_b\left[L\big(Y,f(\tilde X_b^{(j)})\big)
      -L\big(Y,f(X)\big)\right]
   
+  With outcomes and the squared-error or Brier loss, CPI adds the orthogonalizing
+  term :math:`\big(Y-f(X)\big)\big(f(X)-\mathbb{E}_b[f(\tilde X_b)]\big)`, which
+  removes the first-order dependence on the regression error.
+
 - **SCPI (Sobol-CPI)**: Average the counterfactual predictions first, then
   apply the loss:
   
@@ -173,7 +177,8 @@ underlying distribution structure
 
 The one-half factor is the normalized CPI convention used by the FDFI paper.
 For squared loss and the same finite draws,
-:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]`;
+:math:`2\widehat\phi^{CPI}=\widehat\phi^{SCPI}+\mathrm{Var}_b[f(\tilde X_b)]+2\big(Y-f(X)\big)\big(f(X)-\mathbb{E}_b[f(\tilde X_b)]\big)`
+(without the last term in the label-free form);
 the two population targets agree under exact disentanglement and Bayes-optimal
 prediction as the number of resamples tends to infinity.
 

@@ -42,7 +42,9 @@ class OTExplainer(Explainer):
         * ``'permutation'`` – permute the test-set latent values.
         * ``'normal'`` – draw i.i.d. standard normal samples.
     random_state : int, default=0
-        Seed for the random number generator used in resampling.
+        Seed for the counterfactual draws.  Each call draws from a new stream
+        spawned from it, so repeated calls (e.g. on chunks of a test set) are
+        independent and the sequence of calls is reproducible.
     method : {'cpi', 'scpi'}, default='cpi'
         Counterfactual resampling estimator:
 
@@ -126,12 +128,15 @@ class OTExplainer(Explainer):
         self.nsamples = nsamples
         self.regularize = kwargs.get("regularize", 1e-6)
         self.sampling_method = sampling_method
-        self.random_state = random_state if random_state is not None else 0
+        self._set_random_state(random_state)
         self.method = method
 
         self._whiten(data)
-        self.Z_full = (data - self.mean) @ self.L_inv
+        self._set_pool(data)
         self._compute_diagnostics(report_title="OTExplainer")
+
+    def _set_pool(self, X: np.ndarray) -> None:
+        self.Z_full = (X - self.mean) @ self.L_inv
 
     def __call__(
         self, X: np.ndarray, y: Optional[np.ndarray] = None, **kwargs: Any
@@ -163,13 +168,14 @@ class OTExplainer(Explainer):
         :class:`Crossfitting`."""
         Z = (X - self.mean) @ self.L_inv
         y_pred = np.asarray(self.model(X), dtype=float)
-        ueifs_Z = self._phi_Z(Z, y_pred, y_true=y)
+        ueifs_Z = self._phi_Z(Z, y_pred, self._call_key(), y_true=y)
         return ueifs_Z @ (self.L ** 2).T, ueifs_Z
 
     def _phi_Z(
         self,
         Z: np.ndarray,
         y_pred: np.ndarray,
+        key: int,
         y_true: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Per-sample uncentered EIF in Z-space via counterfactual resampling.
@@ -180,13 +186,14 @@ class OTExplainer(Explainer):
         average per-resample loss difference; SCPI applies the loss after
         averaging the counterfactual predictions. With the default squared-
         error loss and no ``y_true``, the reference is the baseline prediction.
+        Feature ``j`` draws from the stream ``[key, j]`` (see :meth:`_call_key`).
         """
         n, d = Z.shape
         ueifs_Z = np.zeros((n, d))
         
         for j in range(d):
 
-            rng = np.random.default_rng(self.random_state + j)
+            rng = np.random.default_rng([key, j])
             
             # Z_tilde: (nsamples, n, d)
             Z_tilde = np.tile(Z[None, :, :], (self.nsamples, 1, 1))
