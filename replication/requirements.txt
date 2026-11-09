@@ -18,6 +18,7 @@ torch==2.13.0
 torchdiffeq==0.2.5
 tqdm==4.70.0
 
-# ===== Case-study data =====
+# ===== Case studies =====
 pandas==2.3.3
+threadpoolctl==3.8.0
 xlrd==2.0.2

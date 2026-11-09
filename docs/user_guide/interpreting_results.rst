@@ -141,7 +141,8 @@ following getters (arrays have length ``d`` for feature-level output, or length
        ``alpha``.
    * - ``get_pvalue()``
      - ``ndarray (d,)``
-     - One- or two-sided p-value depending on ``alternative``.
+     - p-value of the test set by ``alternative`` (see
+       :doc:`statistical_inference`).
    * - ``get_pvalue_adj()``
      - ``ndarray (d,)``
      - Multiple-testing-adjusted p-value.  Returns None unless

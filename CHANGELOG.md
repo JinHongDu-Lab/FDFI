@@ -33,6 +33,15 @@
   chunks gave correlated per-sample scores and too small pooled standard
   errors.  Each call now draws from a new stream spawned from
   ``random_state``; a sequence of calls stays reproducible.
+- **Significance below the margin**: with ``alternative='two-sided'`` and a
+  positive margin, ``conf_int()`` rejected the null for scores significantly
+  *below* the margin, so ``summary()`` and ``significant()`` reported
+  practically null features as significant. Both ``'two-sided'`` and
+  ``'greater'`` now test ``H0: phi <= margin`` and reject only when the
+  interval lies above the margin; the two-sided p-value is
+  ``min(1, 2 * P(Z > zscore))``.
+- ``Crossfitting(...)(X_new, y=y_new)`` ignored ``y``; the outcomes are now
+  passed to every fold explainer.
 - ``EOTExplainer(auto_epsilon=True)`` chooses epsilon from a subsample with a
   fixed seed, so it depends on the data only and all ``Crossfitting`` folds
   share it.
@@ -69,9 +78,11 @@
 ### Changed
 - **Result objects.** Calling an explainer now returns an `ExplanationResults`
   object and `conf_int()` returns a `ConfIntResults` object instead of a plain
-  `dict`. Both subclass `dict`, so key access such as `results["phi_X"]` keeps
-  working, and add attribute access (`results.phi_X`), `to_frame()`,
+  `dict`. Read values with getters such as `results.get_phi_X()`,
+  `ci.get_pvalue()` and `ci.get_ci()`; the objects also provide `to_frame()`,
   `top_features()` / `significant()` and an informative printed summary.
+  **Breaking:** key access such as `results["phi_X"]` raises `TypeError`, and
+  `confidence_interval_plot` accepts only a `ConfIntResults`.
 - **`summary()` no longer returns the table when printing.** With the default
   `print_output=True` it prints the table and returns `None`, so the table is no
   longer displayed twice in Jupyter/IPython. Use `print_output=False` to obtain

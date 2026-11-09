@@ -243,7 +243,7 @@ The returned ``ConfIntResults`` exposes these fields through ``get_*()`` methods
    * - ``reject_null``
      - Boolean array indicating rejected null hypotheses.
    * - ``pvalue``
-     - One- or two-sided p-value.
+     - p-value of the test set by ``alternative``.
    * - ``pvalue_adj``
      - Multiple-testing-adjusted p-values (present when ``multitest_method`` is set).
    * - ``groups``

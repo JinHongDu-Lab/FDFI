@@ -129,7 +129,7 @@ class Crossfitting(Explainer):
     def __call__(
         self,
         X: Optional[np.ndarray] = None,
-        **kwargs: Any,
+        y: Optional[np.ndarray] = None,
     ) -> ExplanationResults:
         """
         Compute cross-fitted feature importance.
@@ -146,6 +146,10 @@ class Crossfitting(Explainer):
             If None, cross-fit on ``self.data`` (recommended for valid
             inference).  If provided, shape (m, d), ensemble-predict on
             new data.
+        y : numpy.ndarray, optional
+            Outcomes for new data ``X``, shape (m,), used by the loss as in
+            the wrapped explainer. Cross-fitting uses the ``y`` given at
+            construction.
 
         Returns
         -------
@@ -155,7 +159,12 @@ class Crossfitting(Explainer):
             ``phi_X, std_X, se_X, phi_Z, std_Z, se_Z``.
         """
         if X is not None:
-            return self._ensemble_predict(X)
+            return self._ensemble_predict(X, y)
+        if y is not None:
+            raise ValueError(
+                "y is only used with new data X; pass the outcomes for "
+                "cross-fitting to Crossfitting(y=...)."
+            )
         return self._crossfit()
 
     # ------------------------------------------------------------------
@@ -285,7 +294,9 @@ class Crossfitting(Explainer):
     # Internal: ensemble prediction on new data
     # ------------------------------------------------------------------
 
-    def _ensemble_predict(self, X: np.ndarray) -> ExplanationResults:
+    def _ensemble_predict(
+        self, X: np.ndarray, y: Optional[np.ndarray]
+    ) -> ExplanationResults:
         """Predict with the fitted folds.
 
         Returns
@@ -302,7 +313,7 @@ class Crossfitting(Explainer):
         se_X_list, se_Z_list = [], []
 
         for fold_exp in self.fold_explainers:
-            r = fold_exp(X)
+            r = fold_exp(X, y=y)
             phi_X_list.append(r.get_phi_X())
             phi_Z_list.append(r.get_phi_Z())
             se_X_list.append(r.get_se_X())

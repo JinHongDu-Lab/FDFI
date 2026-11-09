@@ -100,27 +100,31 @@ Three margin strategies are available:
 One-sided vs. Two-sided Tests
 -------------------------------
 
-The ``alternative`` parameter controls the direction of the test:
+The ``alternative`` parameter sets the interval type and the direction of the
+test.  Importance at or below the margin is practically null, so both
+``'two-sided'`` and ``'greater'`` test ``H0: phi <= margin`` and reject only
+when the interval lies above the margin; a score significantly *below* the
+margin is not significant.
 
 .. list-table::
    :header-rows: 1
    :widths: 15 30 55
 
    * - Value
-     - Hypothesis
+     - Rejects when
      - When to use
    * - ``'two-sided'``
-     - ``phi != margin``
-     - Default.  Detect both positive and negative importance, or features
-       that may suppress the target.
+     - ``ci_lower > margin``
+     - Default.  Reports two-sided intervals; the p-value
+       ``min(1, 2 * P(Z > zscore))`` is 1 for scores below the margin.
    * - ``'greater'``
-     - ``phi > margin``
-     - You are only interested in *positive* contributions.  The CI has an
-       open upper bound (+∞); the plot renders it with a ► caret.
+     - ``ci_lower > margin``
+     - One-sided test at level ``alpha``.  The CI has an open upper bound
+       (+∞); the plot renders it with a ► caret.
    * - ``'less'``
-     - ``phi < margin``
-     - You are only interested in *negative* contributions.  The CI has an
-       open lower bound (−∞); the plot renders it with a ◄ caret.
+     - ``ci_upper < margin``
+     - Tests whether importance is *below* the margin.  The CI has an open
+       lower bound (−∞); the plot renders it with a ◄ caret.
 
 .. code-block:: python
 

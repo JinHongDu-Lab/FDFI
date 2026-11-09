@@ -11,7 +11,6 @@ Run from the case_study/ folder:
 Figures are saved to figures/ and tables to outputs/.
 """
 
-import os
 import time
 import warnings
 from pathlib import Path
@@ -24,6 +23,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import sklearn
+import torch
+from threadpoolctl import threadpool_limits
 
 from sklearn.pipeline import make_pipeline
 from sklearn.impute import SimpleImputer
@@ -44,7 +45,7 @@ from fdfi.plots import (
 warnings.filterwarnings("ignore")
 
 # Software versions
-print(f"fdfi {fdfi.__version__} from {fdfi.__file__}")
+print(f"fdfi {fdfi.__version__}")
 print(f"python {platform.python_version()}, numpy {np.__version__}, "
       f"pandas {pd.__version__}, scikit-learn {sklearn.__version__}")
 
@@ -333,28 +334,19 @@ for _, row in res_df.sort_values("zscore", ascending=False).iterrows():
     sig = "***" if row["reject_null"] else ""
     print(f"{row['group']:<20} {row['importance']:>12.4f} {row['se']:>10.4f} {row['zscore']:>10.2f} {sig:>12}")
 
-n_sig = res_df.get_reject_null().sum()
+n_sig = res_df["reject_null"].sum()
 print(f"\nSignificant groups: {n_sig}/{len(res_df)} (Bonferroni alpha=0.05)")
-print(f"Z-score range: {res_df.get_zscore().min():.2f} to {res_df.get_zscore().max():.2f}")
+print(f"Z-score range: {res_df['zscore'].min():.2f} to {res_df['zscore'].max():.2f}")
 
 
 # =============================================================================
 # Case 2 (Section 5): FlowExplainer on the CTG data
 # =============================================================================
 
-# Single-threaded PyTorch
-os.environ.setdefault('OMP_NUM_THREADS', '1')
-os.environ.setdefault('MKL_NUM_THREADS', '1')
-os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
-os.environ.setdefault('VECLIB_MAXIMUM_THREADS', '1')
-os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
-
-try:
-    import torch
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
-except Exception:
-    pass
+# One thread for BLAS, OpenMP and PyTorch, so that the flow fit does not
+# depend on the number of cores. The random forest still uses all cores.
+threadpool_limits(1)
+torch.set_num_threads(1)
 
 RANDOM_STATE = 42
 np.random.seed(RANDOM_STATE)
@@ -362,12 +354,8 @@ np.random.seed(RANDOM_STATE)
 ctg_start = time.time()
 
 # Data
-CTG_URL = (
-    'https://archive.ics.uci.edu/ml/machine-learning-databases/00193/CTG.xls'
-)
-
-print('Downloading CTG dataset from UCI ...')
-raw = pd.read_excel(CTG_URL, sheet_name='Data', skiprows=1, header=0)
+# Cardiotocography data from the UCI Machine Learning Repository
+raw = pd.read_excel(DATA_DIR / 'CTG.xls', sheet_name='Data', skiprows=1, header=0)
 print(f'  Raw shape (before cleaning): {raw.shape}')
 
 X_raw = raw.iloc[:, 10:31].copy()

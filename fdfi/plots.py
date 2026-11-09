@@ -973,7 +973,7 @@ def correlation_heatmap(
 
 
 def confidence_interval_plot(
-    ci_results: Union[ConfIntResults, Mapping[str, Any]],
+    ci_results: ConfIntResults,
     feature_names: Optional[Sequence[Any]] = None,
     max_display: int = 20,
     ax: Optional[Axes] = None,
@@ -992,11 +992,8 @@ def confidence_interval_plot(
 
     Parameters
     ----------
-    ci_results : ConfIntResults or mapping
-        Results returned by ``explainer.conf_int()``, read through their
-        ``get_*()`` methods. A mapping with ``score``, ``ci_lower`` and
-        ``ci_upper`` is also accepted. ``reject_null``, ``ranking`` and
-        ``alternative`` are used when present.
+    ci_results : ConfIntResults
+        Results returned by ``explainer.conf_int()``.
     feature_names : sequence of str, optional
         Feature names. If ``ci_results`` contains ``groups``, those group names
         are used by default.
@@ -1033,16 +1030,8 @@ def confidence_interval_plot(
     >>> ci_one = explainer.conf_int(alpha=0.05, alternative="greater")
     >>> confidence_interval_plot(ci_one, feature_names=feature_names, show=False)
     """
-    if isinstance(ci_results, Mapping):
-        data = dict(ci_results)
-        data.setdefault("alternative", "two-sided")
-        data.setdefault("margin", 0.0)
-        ci_results = ConfIntResults(data)
-    try:
-        score = _as_1d(ci_results.get_score(), "ci_results.get_score()")
-        lower, upper = ci_results.get_ci()
-    except KeyError as exc:
-        raise ValueError(f"ci_results is missing required field: {exc.args[0]}") from exc
+    score = _as_1d(ci_results.get_score(), "ci_results.get_score()")
+    lower, upper = ci_results.get_ci()
     if max_display <= 0:
         raise ValueError("max_display must be positive")
 
@@ -1065,26 +1054,11 @@ def confidence_interval_plot(
     else:
         names = _feature_names(feature_names, n_features)
 
-    try:
-        ranking = ci_results.get_ranking()
-    except KeyError:
-        ranking = None
-    if ranking is not None:
-        ranking = _as_1d(ranking, "ci_results.get_ranking()")
-        if ranking.shape[0] != n_features:
-            raise ValueError("ranking must have the same length as score")
-        order = np.argsort(ranking, kind="stable")
-    else:
-        order = np.argsort(-np.abs(score), kind="stable")
-    order = order[: min(max_display, n_features)]
-
-    try:
-        reject = ci_results.get_reject_null()
-    except KeyError:
-        reject = np.zeros(n_features, dtype=bool)
-    reject = np.asarray(reject)
-    if reject.shape[0] != n_features:
-        raise ValueError("reject_null must have the same length as score")
+    ranking = _as_1d(ci_results.get_ranking(), "ci_results.get_ranking()")
+    reject = np.asarray(ci_results.get_reject_null())
+    if ranking.shape[0] != n_features or reject.shape[0] != n_features:
+        raise ValueError("ranking and reject_null must have the same length as score")
+    order = np.argsort(ranking, kind="stable")[: min(max_display, n_features)]
 
     plot_score = score[order]
     plot_lower = lower[order]

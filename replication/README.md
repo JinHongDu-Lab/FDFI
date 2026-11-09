@@ -18,6 +18,11 @@ fdfi-replication/
 │   │   ├── sens50_processed_dataset.csv
 │   │   ├── feature_group.csv
 │   │   └── CTG.xls
+│   ├── outputs/
+│   │   ├── case1_feature_scores.csv
+│   │   ├── case1_group_results_X.csv
+│   │   ├── case2_feature_results.csv
+│   │   └── case2_group_results.csv
 │   └── figures/
 │       ├── case1_group_importance.pdf
 │       ├── fig3_ctg_correlation_heatmap.pdf
@@ -55,7 +60,11 @@ fdfi-replication/
   (Section 4) applies the EOT explainer to the HIV sens50 data. Case study 2
   (Section 5) applies the Flow explainer to the CTG data.
 - `data/sens50_processed_dataset.csv`, `data/feature_group.csv`: data for Case study 1.
-- `data/CTG.xls`: data for Case study 2.
+- `data/CTG.xls`: data for Case study 2, the Cardiotocography data from the
+  UCI Machine Learning Repository.
+- `outputs/`: tables written by `case_studies.py`: per-feature scores and
+  group results for Case study 1, and feature and group results for Case
+  study 2.
 - `figures/`: figures produced by `case_studies.py`. Files `fig3_*` to `fig7_*`
   are Figures 3–7 in the manuscript. `case1_group_importance.pdf` is a
   supplementary plot for Case study 1 and is not shown in the manuscript.
@@ -115,16 +124,15 @@ python case_studies.py
 ```
 
 All numerical results are printed to the console. The figures are saved in
-`case_study/figures/`.
+`case_study/figures/` and the tables in `case_study/outputs/`.
 
 The case studies were run on a laptop with an Intel Core i7-14650HX CPU.
 Case study 1 (HIV sens50) took about 50 minutes,
 and Case study 2 (CTG) took about 12 minutes,
 for a total of about 1 hour.
 
-The script downloads `CTG.xls` from the UCI repository and thus needs an
-internet connection. If the download fails, set `CTG_URL` in
-`case_studies.py` to `data/CTG.xls`.
+The script reads all data from `case_study/data/` and needs no internet
+connection.
 
 ### 3.2 Simulation (Section 3.5 and Appendix B)
 
@@ -148,6 +156,9 @@ The commands work as follows.
 - `python run_benchmark.py --rerun runtime` repeats the runtime study of
   Appendix B.3 with 16 repetitions and draws Figure 2.
 - `python run_benchmark.py --rerun` runs both studies.
+- `--seeds N` reruns with the first `N` seeds instead of 50 (benchmark) or 16
+  (runtime), for example `python run_benchmark.py --rerun --seeds 1` to check
+  the setup. Rerun results and figures are written to `rerun/`.
 
 **Approximate running times.** The simulations were run on a server with dual
 Intel Xeon Platinum 8580 CPUs (240 logical cores), 1 TB of RAM, and an NVIDIA

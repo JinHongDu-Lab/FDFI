@@ -14,6 +14,7 @@ draws), flow trained for 5,000 steps; only method evaluation is timed.
     python run_benchmark.py --rerun              # rerun both studies into rerun/
     python run_benchmark.py --rerun benchmark    # Figures 1 and 8 only
     python run_benchmark.py --rerun runtime      # Figure 2 only
+    python run_benchmark.py --rerun --seeds 1    # one seed, to check the setup
 """
 import argparse
 import os
@@ -29,9 +30,12 @@ from simulation_plot import _benchmark_figure, _runtime_figure
 HERE = Path(__file__).resolve().parent
 
 
-def rerun_benchmark(results, work):
+def rerun_benchmark(results, work, seeds):
     import torchdiffeq, tqdm  # noqa: F401  without them FDFI rows silently fail
     import simulation
+
+    if seeds:
+        simulation.FIFTY_SEED_REPETITIONS = seeds
 
     runtime = simulation.run_runtime_experiment
     simulation.run_runtime_experiment = lambda *a, **k: []  # runtime is rerun separately
@@ -52,8 +56,11 @@ def rerun_benchmark(results, work):
         summary[keep].to_csv(results / f"simulation_benchmark_{version}.csv", index=False)
 
 
-def rerun_runtime(results, work):
+def rerun_runtime(results, work, seeds):
     import simulation
+
+    if seeds:
+        simulation.D3_RUNTIME_REPETITIONS = seeds
 
     simulation.run_runtime_experiment("d3", work, work, work)
     for name in ("results", "summary"):
@@ -77,6 +84,10 @@ def plot(results, figures):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--rerun", nargs="?", const="all", choices=("all", "benchmark", "runtime"))
+    parser.add_argument(
+        "--seeds", type=int,
+        help="number of seeds to rerun (default: 50 for the benchmark, 16 for runtime)",
+    )
     args = parser.parse_args()
 
     out = HERE / "rerun" if args.rerun else HERE
@@ -86,11 +97,11 @@ def main():
         if args.rerun in ("all", "benchmark"):
             work = out / "checkpoints" / "benchmark"
             work.mkdir(parents=True, exist_ok=True)
-            rerun_benchmark(results, work)
+            rerun_benchmark(results, work, args.seeds)
         if args.rerun in ("all", "runtime"):
             work = out / "checkpoints" / "runtime"
             work.mkdir(parents=True, exist_ok=True)
-            rerun_runtime(results, work)
+            rerun_runtime(results, work, args.seeds)
     plot(results, out / "figures")
 
 

@@ -843,6 +843,37 @@ class TestCrossfittingWithOT:
         results = cf(X_new)
         assert results.get_phi_X().shape == (4,)
 
+    def test_ensemble_predict_passes_y(self):
+        rng = np.random.default_rng(6)
+        data = rng.standard_normal((80, 4))
+        X_new = rng.standard_normal((20, 4))
+        y_new = _simple_model(X_new)
+        cf = Crossfitting(
+            _simple_model, data,
+            explainer_class=OTExplainer, cv=3, nsamples=10,
+            random_state=0,
+        )
+        cf()
+        seen = []
+
+        class Spy:
+            def __init__(self, inner):
+                self.inner = inner
+
+            def __call__(self, X, y=None):
+                seen.append(y)
+                return self.inner(X, y=y)
+
+        cf.fold_explainers = [Spy(e) for e in cf.fold_explainers]
+        cf(X_new, y=y_new)
+        assert len(seen) == 3 and all(y is y_new for y in seen)
+
+    def test_y_without_new_data_raises(self):
+        data = np.random.default_rng(7).standard_normal((40, 3))
+        cf = Crossfitting(_simple_model, data, explainer_class=OTExplainer, cv=2)
+        with pytest.raises(ValueError, match="Crossfitting\\(y="):
+            cf(y=np.zeros(40))
+
 
 class TestCrossfittingWithEOT:
     """Cross-fitting with EOTExplainer."""
@@ -1097,6 +1128,21 @@ class TestGroupImportanceBehavior:
 
 class TestMultipleTesting:
     """Test multiple testing corrections in conf_int."""
+
+    @pytest.mark.parametrize("alternative", ["two-sided", "greater"])
+    def test_scores_below_margin_are_not_significant(self, alternative):
+        explainer = _make_ot_explainer_with_results()
+        margin = 0.5 * explainer._last_results["phi_X"][0]
+        res = explainer.conf_int(
+            margin=margin, margin_method="fixed", var_floor_c=0.0,
+            alternative=alternative,
+        )
+        below = res.get_score() < margin
+        assert below.any()
+        assert not res.get_reject_null()[below].any()
+        assert np.all(res.get_pvalue()[below] >= 0.5)
+        assert np.array_equal(res.get_reject_null(), res.get_ci_lower() > margin)
+        assert np.array_equal(res.get_reject_null(), res.get_pvalue() < 0.05)
 
     def test_conf_int_multitest_bonferroni(self):
         explainer = _make_ot_explainer_with_results()

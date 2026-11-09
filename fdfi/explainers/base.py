@@ -452,7 +452,11 @@ class Explainer:
         margin_quantile : float, default=0.95
             Quantile for the 'mixture' margin method.
         alternative : str, default='two-sided'
-            Alternative hypothesis ('two-sided', 'greater', or 'less').
+            Interval type ('two-sided', 'greater', or 'less'). With
+            'two-sided' and 'greater', a unit is significant when its interval
+            lies above ``margin``, testing ``H0: phi <= margin``; the
+            two-sided p-value is ``min(1, 2 * P(Z > zscore))``. With 'less',
+            it is significant when its interval lies below ``margin``.
         verbose : bool, default=False
             Whether to print debug information.
 
@@ -470,7 +474,7 @@ class Explainer:
             - ``'ci_lower'``: lower confidence interval bound.
             - ``'ci_upper'``: upper confidence interval bound.
             - ``'reject_null'``: boolean array, True where null is rejected.
-            - ``'pvalue'``: two-sided or one-sided p-value.
+            - ``'pvalue'``: p-value for the test described under ``alternative``.
             - ``'margin'``: null hypothesis margin used.
             - ``'margin_method'``: method used to select the margin.
             - ``'alternative'``: alternative hypothesis string.
@@ -562,9 +566,11 @@ class Explainer:
                 z = stats.norm.ppf(1 - alpha / 2)
                 ci_lower = phi_hat - z * se_adj
                 ci_upper = phi_hat + z * se_adj
-                reject_null = (ci_lower > margin) | (ci_upper < margin)
-                z_scores = np.abs(phi_hat - margin) / se_adj
-                pvalues = 2 * (1 - stats.norm.cdf(z_scores))
+                # Importance below the margin is practically null, so only an
+                # interval above the margin rejects H0: phi <= margin.
+                reject_null = ci_lower > margin
+                z_scores = (phi_hat - margin) / se_adj
+                pvalues = np.minimum(2 * stats.norm.sf(z_scores), 1.0)
             else:
                 raise ValueError(
                     "alternative must be 'greater', 'less', or 'two-sided'"
