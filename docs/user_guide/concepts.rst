@@ -222,7 +222,7 @@ A key advantage of DFI is **built-in uncertainty quantification**. The
 - **Multiple Testing Correction**: control of False Discovery Rate (FDR) or
   Family-Wise Error Rate (FWER) via ``multitest_method``.
 
-The returned dictionary includes:
+The returned ``ConfIntResults`` exposes these fields through ``get_*()`` methods:
 
 .. list-table::
    :header-rows: 1

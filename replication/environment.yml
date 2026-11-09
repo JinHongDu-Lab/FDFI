@@ -7,7 +7,7 @@ dependencies:
   - pip
 
   - pip:
-      # ===== FDFI 0.2.1 (bundled source, identical to PyPI release) =====
+      # ===== FDFI 0.2.1 (bundled source with get_* result accessors) =====
       - ./fdfi-0.2.1.tar.gz
 
       # ===== FDFI core dependencies =====

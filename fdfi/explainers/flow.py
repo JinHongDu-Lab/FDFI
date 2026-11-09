@@ -609,7 +609,7 @@ class FlowExplainer(Explainer):
         Returns
         -------
         ExplanationResults
-            Dict-compatible result with attribute access, ``importance()``,
+            Result with ``get_*()`` accessors, ``importance()``,
             ``to_frame()`` and ``top_features()``. Contains:
             - phi_Z: Z-space importance (d,) - CPI or SCPI depending on method
             - std_Z: Standard deviation (d,)

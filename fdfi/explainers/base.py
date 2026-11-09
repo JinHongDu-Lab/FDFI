@@ -459,8 +459,8 @@ class Explainer:
         Returns
         -------
         ConfIntResults
-            Dict-compatible inference results with attribute access,
-            ``to_frame()`` and ``significant()``. Keys include (arrays of
+            Inference results with ``get_*()`` accessors,
+            ``to_frame()`` and ``significant()``. Fields include (arrays of
             length *d* or *G*):
 
             - ``'score'``: estimated feature importance (mean UEIF).
@@ -475,7 +475,7 @@ class Explainer:
             - ``'margin_method'``: method used to select the margin.
             - ``'alternative'``: alternative hypothesis string.
 
-            Additional keys added when applicable:
+            Additional fields available when applicable:
 
             - ``'groups'``: list of group names (when ``groups`` is provided).
             - ``'pvalue_adj'``: multiple-testing-adjusted p-values (when
@@ -848,36 +848,36 @@ class Explainer:
         )
 
         return {
-            "groups": np.array(results["groups"]),
-            "importance": results["score"],
-            "se": results["se"],
-            "zscore": results["zscore"],
-            "pvalue": results["pvalue"],
+            "groups": np.array(results.get_groups()),
+            "importance": results.get_score(),
+            "se": results.get_se(),
+            "zscore": results.get_zscore(),
+            "pvalue": results.get_pvalue(),
         }
 
 
-    def _format_summary(self, results: dict, alpha: float) -> str:
+    def _format_summary(self, results: ConfIntResults, alpha: float) -> str:
         lines = []
         lines.append("=" * 78)
         lines.append("Feature Importance Results")
         lines.append("=" * 78)
         lines.append(f"Method: {self.__class__.__name__}")
-        lines.append(f"Number of units: {len(results['score'])}")
+        lines.append(f"Number of units: {len(results.get_score())}")
         lines.append(f"Significance level: {alpha}")
-        lines.append(f"Alternative: {results['alternative']}")
+        lines.append(f"Alternative: {results.get_alternative()}")
         
-        multitest_method = results.get("multitest_method")
+        multitest_method = results.get_multitest_method()
         if multitest_method:
             lines.append(f"Multiple testing: {multitest_method}")
             
-        margin_method_str = results.get("margin_method", "")
+        margin_method_str = results.get_margin_method()
         if margin_method_str:
             lines.append(f"Margin method: {margin_method_str}")
-        if results["margin"] > 0:
-            lines.append(f"Practical margin: {results['margin']:.4f}")
+        if results.get_margin() > 0:
+            lines.append(f"Practical margin: {results.get_margin():.4f}")
         lines.append("-" * 78)
 
-        has_groups = "groups" in results
+        has_groups = results.get_groups() is not None
         unit_label = "Group" if has_groups else "Feature"
         pval_label = "Adj P-val" if multitest_method else "P-value"
         header = (
@@ -887,10 +887,10 @@ class Explainer:
         lines.append(header)
         lines.append("-" * 78)
 
-        has_pvalue_adj = "pvalue_adj" in results
-        for i in range(len(results["score"])):
-            ci_lower = results["ci_lower"][i]
-            ci_upper = results["ci_upper"][i]
+        has_pvalue_adj = results.get_pvalue_adj() is not None
+        for i in range(len(results.get_score())):
+            ci_lower = results.get_ci_lower()[i]
+            ci_upper = results.get_ci_upper()[i]
             ci_upper_str = (
                 f"{ci_upper:>10.4f}" if np.isfinite(ci_upper) else f"{'inf':>10}"
             )
@@ -898,23 +898,23 @@ class Explainer:
                 f"{ci_lower:>10.4f}" if np.isfinite(ci_lower) else f"{'-inf':>10}"
             )
             
-            pval = results["pvalue_adj"][i] if has_pvalue_adj else results["pvalue"][i]
+            pval = results.get_pvalue_adj()[i] if has_pvalue_adj else results.get_pvalue()[i]
             sig = (
                 "***"
                 if pval < 0.01
                 else ("**" if pval < 0.05 else ("*" if pval < 0.1 else ""))
             )
-            name = str(results["groups"][i]) if has_groups else str(i)
+            name = str(results.get_groups()[i]) if has_groups else str(i)
             row = (
-                f"{name:>15} {results['score'][i]:>10.4f} "
-                f"{results['se'][i]:>10.4f} {ci_lower_str} {ci_upper_str} "
+                f"{name:>15} {results.get_score()[i]:>10.4f} "
+                f"{results.get_se()[i]:>10.4f} {ci_lower_str} {ci_upper_str} "
                 f"{pval:>10.4f} {sig:>5}"
             )
             lines.append(row)
 
         lines.append("=" * 78)
-        n_sig = np.sum(results["reject_null"])
-        lines.append(f"Significant units: {n_sig} / {len(results['score'])}")
+        n_sig = np.sum(results.get_reject_null())
+        lines.append(f"Significant units: {n_sig} / {len(results.get_score())}")
         lines.append("---")
         lines.append("Signif. codes:  0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1")
         lines.append("=" * 78)

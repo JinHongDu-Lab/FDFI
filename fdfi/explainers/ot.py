@@ -107,11 +107,11 @@ class OTExplainer(Explainer):
     >>>
     >>> explainer = OTExplainer(model, data=X_bg, nsamples=50)
     >>> results = explainer(X_test)
-    >>> print(results.phi_X)        # global importance, X-space
-    >>> print(results.phi_Z)        # global importance, Z-space
+    >>> print(results.get_phi_X())        # global importance, X-space
+    >>> print(results.get_phi_Z())        # global importance, Z-space
     >>>
     >>> ci = explainer.conf_int(alpha=0.05, alternative="greater")
-    >>> summary_bar(results.phi_X, results.se_X, show=False)
+    >>> summary_bar(results.get_phi_X(), results.get_se_X(), show=False)
     """
     def __init__(
         self,
@@ -155,8 +155,8 @@ class OTExplainer(Explainer):
         Returns
         -------
         ExplanationResults
-            Dict-compatible importance and uncertainty estimates in X- and
-            Z-space, with attribute access, ``importance()``, ``to_frame()``
+            Importance and uncertainty estimates in X- and
+            Z-space, with ``get_*()`` accessors, ``importance()``, ``to_frame()``
             and ``top_features()``.
         """
         return self._explain(X, y)

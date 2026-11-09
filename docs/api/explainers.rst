@@ -20,13 +20,13 @@ The following methods are available on all working explainer classes
 
 ``__call__(X_test)``
     Compute per-sample UEIFs and aggregate them to ``phi_X`` / ``phi_Z`` plus
-    standard errors. Returns a dict-compatible ``ExplanationResults`` with
-    attribute access, ``importance()``, ``to_frame()`` and ``top_features()``;
+    standard errors. Returns an ``ExplanationResults`` with
+    ``get_*()`` accessors, ``importance()``, ``to_frame()`` and ``top_features()``;
     also stores ``explainer.ueifs_X`` and ``explainer.ueifs_Z``.
 
 ``conf_int(alpha=0.05, alternative='two-sided', margin=0.0, multitest_method=None, ...)``
     Compute confidence intervals and p-values from the stored UEIFs. Returns
-    a dict-compatible ``ConfIntResults`` with ``to_frame()`` and
+    a ``ConfIntResults`` with ``get_*()`` accessors, ``to_frame()`` and
     ``significant()`` methods. See
     :doc:`../user_guide/statistical_inference` for detailed usage.
 
@@ -42,9 +42,14 @@ The following methods are available on all working explainer classes
 Result objects
 --------------
 
-Result containers subclass ``dict``, preserving key access such as
-``results["phi_X"]`` while supporting ``results.phi_X``. Calling ``to_frame()``
-requires pandas, imported only when this method is used.
+Result containers are plain classes. Read values through methods such as
+``results.get_phi_X()``, ``results.get_se_Z()``, ``ci.get_score()`` and
+``ci.get_pvalue()``. ``ci.get_ci()`` returns the ``(lower, upper)`` arrays.
+For FlowExplainer with ``method='both'``, use ``get_phi_X_scpi()`` and the
+other ``get_*_scpi()`` methods for SCPI results. ``get_groups()``,
+``get_pvalue_adj()`` and ``get_multitest_method()`` return ``None`` when
+not applicable. Other getters raise ``KeyError`` for unavailable fields.
+Calling ``to_frame()`` requires pandas, imported only when this method is used.
 
 .. autoclass:: fdfi.results.ExplanationResults
    :members:
@@ -126,13 +131,13 @@ point for most use cases.
    explainer = OTExplainer(model, data=X_background, nsamples=50)
    results = explainer(X_test)
 
-   print("Feature importance (X-space):", results.phi_X)
-   print("Standard errors:", results.se_X)
+   print("Feature importance (X-space):", results.get_phi_X())
+   print("Standard errors:", results.get_se_X())
 
    # Compute confidence intervals with FDR control (Benjamini-Hochberg)
    ci = explainer.conf_int(multitest_method='fdr_bh', alpha=0.05)
    print("Significant features after FDR control:", ci.significant())
-   print("Adjusted p-values:", ci.pvalue_adj)
+   print("Adjusted p-values:", ci.get_pvalue_adj())
 
 Entropic Optimal Transport (EOTExplainer)
 -----------------------------------------
@@ -229,7 +234,7 @@ package's CPI.
    )
    results = explainer(X_test)
 
-   print("Z-space importance (CPI):", results["phi_Z"])
+   print("Z-space importance (CPI):", results.get_phi_Z())
    print("Confidence intervals:")
    ci = explainer.conf_int(alpha=0.05, target="Z")
 
@@ -249,7 +254,7 @@ package's CPI.
    )
    results = explainer(X_test)
 
-   print("Importance (SCPI):", results["phi_Z"])
+   print("Importance (SCPI):", results.get_phi_Z())
 
 **Using external flow models:**
 
@@ -367,7 +372,7 @@ Groups can be specified as:
    res = explainer.conf_int(groups=groups)
 
    for name, imp, se, p in zip(
-       res["groups"], res["score"], res["se"], res["pvalue"]
+       res.get_groups(), res.get_score(), res.get_se(), res.get_pvalue()
    ):
        print(f"{name}: importance={imp:.4f}  se={se:.4f}  p={p:.4f}")
 

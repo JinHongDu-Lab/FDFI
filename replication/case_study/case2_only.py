@@ -226,9 +226,9 @@ print(pd.Series(y_values).value_counts().sort_index().rename({0: 'Normal = 0', 1
 
 results = explainer(X_values)
 
-# [0.2.1] Attribute access on the ExplanationResults object (comment 3).
-print(f"results.phi_X.shape: {results.phi_X.shape}")
-print(f"results.se_X.shape: {results.se_X.shape}")
+# [0.2.1] Getter access on the ExplanationResults object (comment 3).
+print(f"results.get_phi_X().shape: {results.get_phi_X().shape}")
+print(f"results.get_se_X().shape: {results.get_se_X().shape}")
 print(f"explainer.ueifs_X shape: {explainer.ueifs_X.shape}")
 
 # [0.2.1] ConfIntResults object; its ranking is used by Figure 6 (comment 4).
@@ -293,8 +293,8 @@ GROUP_COLOUR = {
 }
 
 fig, ax, importance_df_sorted = summary_bar(
-    ci.score,
-    ci.se,
+    ci.get_score(),
+    ci.get_se(),
     feature_names,
     group_colors=GROUP_COLOUR,
     max_display=len(feature_names),
@@ -421,9 +421,9 @@ print(f"{'Feature':>12} {'resample':>15} {'permutation':>15} {'normal':>15}")
 print('-' * 80)
 
 for i, fname in enumerate(feature_names):
-    r = results_by_method['resample'].phi_X[i]
-    p = results_by_method['permutation'].phi_X[i]
-    n = results_by_method['normal'].phi_X[i]
+    r = results_by_method['resample'].get_phi_X()[i]
+    p = results_by_method['permutation'].get_phi_X()[i]
+    n = results_by_method['normal'].get_phi_X()[i]
     print(f"{fname:>12} {r:>15.6f} {p:>15.6f} {n:>15.6f}")
 
 print('=' * 80)

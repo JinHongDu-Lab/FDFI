@@ -62,8 +62,8 @@ class TestCoupling:
         kw = dict(epsilon=1.0, nsamples=10, method=method, compute_diagnostics=False)
         r1 = EOTExplainer(model, X, n_jobs=1, **kw)(X, y)
         r4 = EOTExplainer(model, X, n_jobs=4, **kw)(X, y)
-        assert np.array_equal(r1["phi_Z"], r4["phi_Z"])
-        assert np.array_equal(r1["se_X"], r4["se_X"])
+        assert np.array_equal(r1.get_phi_Z(), r4.get_phi_Z())
+        assert np.array_equal(r1.get_se_X(), r4.get_se_X())
 
     def test_model_runs_on_calling_thread_with_one_job(self):
         import threading
@@ -87,7 +87,7 @@ class TestCoupling:
             EOTExplainer(lambda x: x[:, 0], X, n_eta=1)
         ex = EOTExplainer(lambda x: x[:, 0], X, method="scpi", loss="l1", nsamples=2)
         res = ex(X)
-        assert np.all(np.isfinite(res["phi_Z"]))
+        assert np.all(np.isfinite(res.get_phi_Z()))
 
 
 class TestMonteCarloCorrections:
@@ -111,9 +111,9 @@ class TestMonteCarloCorrections:
         res = explainer(X, y if labelled else None)
         # Without the corrections (CPI) or the shared coupling draws (SCPI)
         # the null features are off by a multiple of (1 - s^2) / n_eta = 0.04.
-        assert np.all(np.abs(res["phi_Z"][1:]) < 0.01)
+        assert np.all(np.abs(res.get_phi_Z()[1:]) < 0.01)
         s2 = explainer.s_fwd ** 2
-        assert res["phi_Z"][0] == pytest.approx(s2, abs=0.06)
+        assert res.get_phi_Z()[0] == pytest.approx(s2, abs=0.06)
 
     @pytest.mark.parametrize("labelled", [True, False])
     def test_cpi_removes_replicate_monte_carlo_variance(self, labelled):
@@ -156,10 +156,10 @@ class TestAttribution:
         w, V = np.linalg.eigh(Sigma)
         B = V @ np.diag(np.sqrt(w)) @ V.T
         # eta(z) = s beta^T B z, so phi_{Z_j} = s^2 (B beta)_j^2
-        assert np.allclose(res["phi_Z"], s ** 2 * (B @ beta) ** 2, rtol=0.2, atol=0.3)
+        assert np.allclose(res.get_phi_Z(), s ** 2 * (B @ beta) ** 2, rtol=0.2, atol=0.3)
         # With weights (s B_lj)^2 the attributed total is s^2 times the latent
         # total for standardized features.
-        assert res["phi_X"].sum() == pytest.approx(s ** 2 * res["phi_Z"].sum(), rel=0.05)
+        assert res.get_phi_X().sum() == pytest.approx(s ** 2 * res.get_phi_Z().sum(), rel=0.05)
 
 
 class TestOrthogonalizedCPI:
@@ -180,7 +180,7 @@ class TestOrthogonalizedCPI:
         for m in ("cpi", "scpi"):
             ex = EOTExplainer(lambda Xo: Xo @ b_hat, X, epsilon=0.0, nsamples=B,
                               random_state=3, method=m, compute_diagnostics=False)
-            phi[m] = np.asarray(ex(X, y)["phi_Z"])
+            phi[m] = np.asarray(ex(X, y).get_phi_Z())
         target = b_hat * (2 * b - b_hat)
         assert np.allclose(phi["cpi"], target, rtol=0.05, atol=0.05)
         assert np.allclose(phi["scpi"], phi["cpi"] + b_hat ** 2 / B, atol=0.03)
@@ -199,8 +199,8 @@ class TestCrossfitting:
         )
         res = cf()
         s2 = gaussian_eot_scale(1.0) ** 2
-        assert abs(res["phi_Z"][0] - s2) < 3 * res["se_Z"][0]
-        assert np.all(np.abs(res["phi_Z"][1:]) < 0.1)
+        assert abs(res.get_phi_Z()[0] - s2) < 3 * res.get_se_Z()[0]
+        assert np.all(np.abs(res.get_phi_Z()[1:]) < 0.1)
 
     def test_folds_share_auto_epsilon(self):
         from fdfi.explainers import Crossfitting

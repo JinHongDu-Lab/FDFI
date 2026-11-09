@@ -146,10 +146,10 @@ eot_results = eot_explainer(X_values, y=y_values)
 dfi_time = time.time() - start_time
 
 print(f"EOT FDFI completed in {dfi_time:.2f} seconds")
-print(f"DFI scores shape: {eot_results.phi_X.shape}")
+print(f"DFI scores shape: {eot_results.get_phi_X().shape}")
 print(eot_results.to_frame().head())
 
-print("sum phi_X, sum phi_Z:", np.sum(eot_results.phi_X), np.sum(eot_results.phi_Z))
+print("sum phi_X, sum phi_Z:", np.sum(eot_results.get_phi_X()), np.sum(eot_results.get_phi_Z()))
 
 # Diagnostics (Appendix C.2)
 eot_diag = eot_explainer.diagnostics
@@ -158,8 +158,8 @@ print(f"EOT median latent dCor: {eot_diag['latent_independence_median']:.6g}")
 
 pd.DataFrame({
     "feature": X.columns,
-    "phi_X": eot_results.phi_X, "se_X": eot_results.se_X,
-    "phi_Z": eot_results.phi_Z, "se_Z": eot_results.se_Z,
+    "phi_X": eot_results.get_phi_X(), "se_X": eot_results.get_se_X(),
+    "phi_Z": eot_results.get_phi_Z(), "se_Z": eot_results.get_se_Z(),
 }).to_csv(OUT_DIR / "case1_feature_scores.csv", index=False)
 
 # Feature-level inference
@@ -333,9 +333,9 @@ for _, row in res_df.sort_values("zscore", ascending=False).iterrows():
     sig = "***" if row["reject_null"] else ""
     print(f"{row['group']:<20} {row['importance']:>12.4f} {row['se']:>10.4f} {row['zscore']:>10.2f} {sig:>12}")
 
-n_sig = res_df["reject_null"].sum()
+n_sig = res_df.get_reject_null().sum()
 print(f"\nSignificant groups: {n_sig}/{len(res_df)} (Bonferroni alpha=0.05)")
-print(f"Z-score range: {res_df['zscore'].min():.2f} to {res_df['zscore'].max():.2f}")
+print(f"Z-score range: {res_df.get_zscore().min():.2f} to {res_df.get_zscore().max():.2f}")
 
 
 # =============================================================================
@@ -494,8 +494,8 @@ print(pd.Series(y_values).value_counts().sort_index().rename({0: 'Normal = 0', 1
 
 results = explainer(X_values)
 
-print(f"results.phi_X.shape: {results.phi_X.shape}")
-print(f"results.se_X.shape: {results.se_X.shape}")
+print(f"results.get_phi_X().shape: {results.get_phi_X().shape}")
+print(f"results.get_se_X().shape: {results.get_se_X().shape}")
 print(f"explainer.ueifs_X shape: {explainer.ueifs_X.shape}")
 
 # Feature-level inference (Section 5.5)
@@ -555,8 +555,8 @@ GROUP_COLOUR = {
 }
 
 fig, ax, importance_df = summary_bar(
-    ci.score,
-    ci.se,
+    ci.get_score(),
+    ci.get_se(),
     feature_names,
     group_colors=GROUP_COLOUR,
     max_display=len(feature_names),
@@ -677,9 +677,9 @@ print(f"{'Feature':>12} {'resample':>15} {'permutation':>15} {'normal':>15}")
 print('-' * 80)
 
 for i, fname in enumerate(feature_names):
-    r = results_by_method['resample'].phi_X[i]
-    p = results_by_method['permutation'].phi_X[i]
-    n = results_by_method['normal'].phi_X[i]
+    r = results_by_method['resample'].get_phi_X()[i]
+    p = results_by_method['permutation'].get_phi_X()[i]
+    n = results_by_method['normal'].get_phi_X()[i]
     print(f"{fname:>12} {r:>15.6f} {p:>15.6f} {n:>15.6f}")
 
 print('=' * 80)

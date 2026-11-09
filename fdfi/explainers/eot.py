@@ -211,8 +211,8 @@ class EOTExplainer(Explainer):
         Returns
         -------
         ExplanationResults
-            Dict-compatible importance and uncertainty estimates in X- and
-            Z-space, with attribute access, ``importance()``, ``to_frame()``
+            Importance and uncertainty estimates in X- and
+            Z-space, with ``get_*()`` accessors, ``importance()``, ``to_frame()``
             and ``top_features()``.
         """
         return self._explain(X, y)

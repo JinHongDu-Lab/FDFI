@@ -82,10 +82,10 @@ Use the ``conf_int()`` method after computing importance:
    results = explainer(X_test)
    ci = explainer.conf_int(alpha=0.05, alternative="two-sided")
 
-   print("Estimates:", ci["score"])
-   print("CI Lower:", ci["ci_lower"])
-   print("CI Upper:", ci["ci_upper"])
-   print("P-values:", ci["pvalue"])
+   print("Estimates:", ci.get_score())
+   print("CI Lower:", ci.get_ci_lower())
+   print("CI Upper:", ci.get_ci_upper())
+   print("P-values:", ci.get_pvalue())
 
 What is the variance floor?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -141,8 +141,8 @@ Pass ``multitest_method`` to :meth:`~fdfi.explainers.Explainer.conf_int`:
 .. code-block:: python
 
    ci = explainer.conf_int(alpha=0.05, multitest_method="fdr_bh")
-   # ci["pvalue_adj"] contains Benjamini-Hochberg adjusted p-values
-   # ci["reject_null"] reflects the adjusted decision
+   # ci.get_pvalue_adj() contains Benjamini-Hochberg adjusted p-values
+   # ci.get_reject_null() reflects the adjusted decision
 
 Performance Questions
 ---------------------

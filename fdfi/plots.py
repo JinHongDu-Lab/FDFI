@@ -18,6 +18,8 @@ from matplotlib.figure import Figure
 from scipy.cluster import hierarchy
 from scipy.spatial import distance
 
+from .results import ConfIntResults
+
 ArrayLike = Union[np.ndarray, Sequence[float]]
 FeatureRef = Union[int, str]
 
@@ -217,11 +219,11 @@ def summary_bar(
     Parameters
     ----------
     phi_X : array-like of shape (n_features,)
-        Global FDFI scores such as ``results["phi_X"]`` or ``results["phi_Z"]``.
+        Global FDFI scores such as ``results.get_phi_X()`` or ``results.get_phi_Z()``.
         Bar lengths use ``abs(phi_X)`` so signed attribution summaries are also
         supported.
     se_X : array-like of shape (n_features,), optional
-        Standard errors such as ``results["se_X"]``. Missing values default to
+        Standard errors such as ``results.get_se_X()``. Missing values default to
         zero. NaN, inf, and negative entries are sanitized before plotting.
     feature_names : sequence of str, optional
         Feature names. Defaults to ``Feature 0``, ``Feature 1``, ...
@@ -252,8 +254,8 @@ def summary_bar(
     Examples
     --------
     >>> fig, ax, table = summary_bar(
-    ...     results["phi_X"],
-    ...     se_X=results["se_X"],
+    ...     results.get_phi_X(),
+    ...     se_X=results.get_se_X(),
     ...     feature_names=feature_names,
     ...     show=False,
     ... )
@@ -338,7 +340,7 @@ def summary_plot(
     Parameters
     ----------
     shap_values : array-like of shape (n_features,) or (n_samples, n_features)
-        FDFI attribution values. Use aggregate arrays such as ``results["phi_X"]``
+        FDFI attribution values. Use aggregate arrays such as ``results.get_phi_X()``
         for bar summaries, or per-sample arrays such as ``explainer.ueifs_X`` for
         beeswarm summaries.
     features : array-like of shape (n_samples, n_features), optional
@@ -366,7 +368,7 @@ def summary_plot(
     Examples
     --------
     >>> summary_plot(explainer.ueifs_X, features=X_test, show=False)
-    >>> summary_plot(results["phi_X"], se_X=results["se_X"], show=False)
+    >>> summary_plot(results.get_phi_X(), se_X=results.get_se_X(), show=False)
     """
     values = np.asarray(shap_values, dtype=float)
     if values.ndim == 1:
@@ -971,7 +973,7 @@ def correlation_heatmap(
 
 
 def confidence_interval_plot(
-    ci_results: Mapping[str, Any],
+    ci_results: Union[ConfIntResults, Mapping[str, Any]],
     feature_names: Optional[Sequence[Any]] = None,
     max_display: int = 20,
     ax: Optional[Axes] = None,
@@ -990,10 +992,11 @@ def confidence_interval_plot(
 
     Parameters
     ----------
-    ci_results : mapping
-        Dictionary returned by ``explainer.conf_int()``. Required keys are
-        ``score``, ``ci_lower``, and ``ci_upper``. ``reject_null``,
-        ``ranking``, and ``alternative`` are used when present.
+    ci_results : ConfIntResults or mapping
+        Results returned by ``explainer.conf_int()``, read through their
+        ``get_*()`` methods. A mapping with ``score``, ``ci_lower`` and
+        ``ci_upper`` is also accepted. ``reject_null``, ``ranking`` and
+        ``alternative`` are used when present.
     feature_names : sequence of str, optional
         Feature names. If ``ci_results`` contains ``groups``, those group names
         are used by default.
@@ -1030,35 +1033,44 @@ def confidence_interval_plot(
     >>> ci_one = explainer.conf_int(alpha=0.05, alternative="greater")
     >>> confidence_interval_plot(ci_one, feature_names=feature_names, show=False)
     """
-    required = ("score", "ci_lower", "ci_upper")
-    missing = [key for key in required if key not in ci_results]
-    if missing:
-        raise ValueError(f"ci_results is missing required keys: {missing}")
+    if isinstance(ci_results, Mapping):
+        data = dict(ci_results)
+        data.setdefault("alternative", "two-sided")
+        data.setdefault("margin", 0.0)
+        ci_results = ConfIntResults(data)
+    try:
+        score = _as_1d(ci_results.get_score(), "ci_results.get_score()")
+        lower, upper = ci_results.get_ci()
+    except KeyError as exc:
+        raise ValueError(f"ci_results is missing required field: {exc.args[0]}") from exc
     if max_display <= 0:
         raise ValueError("max_display must be positive")
 
     # -- Alternative hypothesis ------------------------------------------
-    alternative = ci_results.get("alternative", "two-sided")
+    alternative = ci_results.get_alternative()
     if alternative not in ("two-sided", "greater", "less"):
         raise ValueError(
-            f"ci_results['alternative'] must be 'two-sided', 'greater', or 'less';"
+            f"ci_results.get_alternative() must be 'two-sided', 'greater', or 'less';"
             f" got {alternative!r}"
         )
 
-    score = _as_1d(ci_results["score"], "ci_results['score']")
-    lower = _as_1d(ci_results["ci_lower"], "ci_results['ci_lower']")
-    upper = _as_1d(ci_results["ci_upper"], "ci_results['ci_upper']")
+    lower = _as_1d(lower, "ci_results.get_ci_lower()")
+    upper = _as_1d(upper, "ci_results.get_ci_upper()")
     n_features = score.shape[0]
     if lower.shape[0] != n_features or upper.shape[0] != n_features:
         raise ValueError("score, ci_lower, and ci_upper must have the same length")
 
-    if feature_names is None and "groups" in ci_results:
-        names = _feature_names(ci_results["groups"], n_features)
+    if feature_names is None and ci_results.get_groups() is not None:
+        names = _feature_names(ci_results.get_groups(), n_features)
     else:
         names = _feature_names(feature_names, n_features)
 
-    if "ranking" in ci_results:
-        ranking = _as_1d(ci_results["ranking"], "ci_results['ranking']")
+    try:
+        ranking = ci_results.get_ranking()
+    except KeyError:
+        ranking = None
+    if ranking is not None:
+        ranking = _as_1d(ranking, "ci_results.get_ranking()")
         if ranking.shape[0] != n_features:
             raise ValueError("ranking must have the same length as score")
         order = np.argsort(ranking, kind="stable")
@@ -1066,7 +1078,11 @@ def confidence_interval_plot(
         order = np.argsort(-np.abs(score), kind="stable")
     order = order[: min(max_display, n_features)]
 
-    reject = np.asarray(ci_results.get("reject_null", np.zeros(n_features, dtype=bool)))
+    try:
+        reject = ci_results.get_reject_null()
+    except KeyError:
+        reject = np.zeros(n_features, dtype=bool)
+    reject = np.asarray(reject)
     if reject.shape[0] != n_features:
         raise ValueError("reject_null must have the same length as score")
 
@@ -1158,7 +1174,7 @@ def confidence_interval_plot(
             eb_kwargs["xlolims"] = True
         ax.errorbar(value, y, xerr=err.reshape(2, 1), **eb_kwargs)
 
-    margin = ci_results.get("margin", 0.0)
+    margin = ci_results.get_margin()
     if np.ndim(margin) == 0:
         ax.axvline(float(margin), color="#555555", linestyle="--", linewidth=0.9)
     ax.axvline(0.0, color="#999999", linestyle=":", linewidth=0.8)

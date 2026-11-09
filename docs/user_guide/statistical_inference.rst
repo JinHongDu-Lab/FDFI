@@ -154,9 +154,9 @@ is inflated.  Pass ``multitest_method`` to apply one of the
    import pandas as pd
    pd.DataFrame({
        "feature":    feature_names,
-       "score":      ci["score"].round(4),
-       "pvalue_adj": ci["pvalue_adj"].round(4),
-       "reject":     ci["reject_null"],
+       "score":      ci.get_score().round(4),
+       "pvalue_adj": ci.get_pvalue_adj().round(4),
+       "reject":     ci.get_reject_null(),
    })
 
 Commonly used methods:
@@ -223,7 +223,7 @@ Complete Example
    results = explainer(X[200:])
 
    # Bar chart with error bars
-   summary_bar(results["phi_X"], results["se_X"], feature_names=feature_names)
+   summary_bar(results.get_phi_X(), results.get_se_X(), feature_names=feature_names)
 
    # One-sided confidence intervals (greater) with FDR correction
    ci = explainer.conf_int(
@@ -235,8 +235,7 @@ Complete Example
 
 .. seealso::
 
-   :doc:`interpreting_results` — reference table for all output dictionary
-   keys.
+   :doc:`interpreting_results` — reference table for all result getters.
 
    :doc:`../tutorials/confidence_intervals` — worked tutorial with visual
    comparisons of one-sided and two-sided CIs.

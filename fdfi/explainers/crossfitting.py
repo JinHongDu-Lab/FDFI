@@ -150,7 +150,7 @@ class Crossfitting(Explainer):
         Returns
         -------
         ExplanationResults
-            Dict-compatible result with attribute access, ``importance()``,
+            Result with ``get_*()`` accessors, ``importance()``,
             ``to_frame()`` and ``top_features()``. Same fields as OT / Flow:
             ``phi_X, std_X, se_X, phi_Z, std_Z, se_Z``.
         """
@@ -163,7 +163,7 @@ class Crossfitting(Explainer):
     # ------------------------------------------------------------------
 
     def _crossfit(self) -> ExplanationResults:
-        """Cross-fit and return dict-compatible ExplanationResults.
+        """Cross-fit and return ExplanationResults with get_*() accessors.
 
         Returns
         -------
@@ -291,7 +291,7 @@ class Crossfitting(Explainer):
         Returns
         -------
         ExplanationResults
-            Dict-compatible importance and uncertainty on the new data.
+            Importance and uncertainty on the new data.
         """
         if not self.fold_explainers:
             # No fold explainers yet — run cross-fitting first
@@ -303,10 +303,10 @@ class Crossfitting(Explainer):
 
         for fold_exp in self.fold_explainers:
             r = fold_exp(X)
-            phi_X_list.append(r["phi_X"])
-            phi_Z_list.append(r["phi_Z"])
-            se_X_list.append(r["se_X"])
-            se_Z_list.append(r["se_Z"])
+            phi_X_list.append(r.get_phi_X())
+            phi_Z_list.append(r.get_phi_Z())
+            se_X_list.append(r.get_se_X())
+            se_Z_list.append(r.get_se_Z())
 
         K = len(self.fold_explainers)
         phi_X = np.mean(phi_X_list, axis=0)

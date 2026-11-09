@@ -370,4 +370,4 @@ All explainers support post-hoc confidence intervals:
        margin=0.0,                  # Practical significance threshold
    )
 
-   print("Significant features:", np.where(ci["reject_null"])[0])
+   print("Significant features:", np.where(ci.get_reject_null())[0])

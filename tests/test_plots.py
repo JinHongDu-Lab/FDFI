@@ -4,6 +4,7 @@ import ast
 import json
 import re
 import warnings
+from pathlib import Path
 
 import matplotlib
 
@@ -24,6 +25,7 @@ from fdfi.plots import (
     summary_plot,
     waterfall_plot,
 )
+from fdfi.results import ConfIntResults
 
 
 @pytest.fixture
@@ -317,6 +319,16 @@ class TestInferenceAndDiagnosticsPlots:
 class TestTutorialSmoke:
     """Smoke checks for visualization tutorial integration."""
 
+    @pytest.mark.parametrize("path", sorted(Path("docs").rglob("*.ipynb")))
+    def test_notebook_code_cells_have_valid_syntax(self, path):
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        for i, cell in enumerate(notebook["cells"]):
+            if cell["cell_type"] == "code":
+                source = "".join(cell["source"])
+                # IPython magic and shell lines are not Python statements.
+                source = re.sub(r"(?m)^(\s*)[%!]", r"\1#", source)
+                ast.parse(source, filename=f"{path}:cell {i}")
+
     def test_visualization_tutorial_is_valid_json(self):
         with open("docs/tutorials/visualization.ipynb", encoding="utf-8") as handle:
             notebook = json.load(handle)
@@ -397,6 +409,25 @@ def _ci_less():
 
 class TestCIPlotOneSided:
     """Tests for one-sided confidence interval rendering in confidence_interval_plot."""
+
+    @pytest.mark.parametrize("make_ci", [_ci_greater, _ci_less])
+    def test_plain_result_matches_mapping_plot(self, make_ci):
+        data = make_ci()
+        data["groups"] = ["signal", "weak", "null"]
+        data["ranking"] = np.array([2, 1, 3])
+        fig_mapping, ax_mapping = confidence_interval_plot(data, show=False)
+        fig_result, ax_result = confidence_interval_plot(ConfIntResults(data), show=False)
+        np.testing.assert_equal(ax_mapping.get_xlim(), ax_result.get_xlim())
+        assert [tick.get_text() for tick in ax_result.get_yticklabels()] == [
+            "weak", "signal", "null"
+        ]
+        assert len(ax_mapping.lines) == len(ax_result.lines)
+        for expected, actual in zip(ax_mapping.lines, ax_result.lines):
+            np.testing.assert_equal(expected.get_xdata(), actual.get_xdata())
+            np.testing.assert_equal(expected.get_ydata(), actual.get_ydata())
+            assert expected.get_marker() == actual.get_marker()
+        close(fig_mapping)
+        close(fig_result)
 
     # -- Smoke tests --------------------------------------------------------
 

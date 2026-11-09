@@ -72,15 +72,24 @@ explainer = OTExplainer(model, data=X_background, nsamples=50)
 X_test = np.random.randn(10, 10)
 results = explainer(X_test)
 print(results)
+phi_X = results.get_phi_X()
+se_X = results.get_se_X()
 # With pandas installed: results.to_frame(sort=True)
 
 # Confidence intervals (post-hoc)
 ci = explainer.conf_int(alpha=0.05, target="X", alternative="two-sided")
+lower, upper = ci.get_ci()
+pvalues = ci.get_pvalue()
 
 # With multiple testing correction (e.g., FDR control)
 ci_fdr = explainer.conf_int(multitest_method="fdr_bh")
 explainer.summary(multitest_method="fdr_bh")
 ```
+
+Result objects expose their values through `get_*()` methods, such as
+`results.get_phi_Z()`, `ci.get_score()`, and `ci.get_ranking()`.
+Use `to_frame()` for a pandas table, `top_features()` for the most important
+features, and `significant()` for significant features or groups.
 
 ### Visualization
 
@@ -102,7 +111,7 @@ feature_names = [f"X{i}" for i in range(X_background.shape[1])]
 correlation_heatmap(X_background, feature_names, show=False)
 
 # Global scores and standard errors from explainer output
-summary_bar(results.phi_X, results.se_X, feature_names, show=False)
+summary_bar(results.get_phi_X(), results.get_se_X(), feature_names, show=False)
 
 # Distribution of per-observation contributions
 summary_plot(explainer.ueifs_X, features=X_test, feature_names=feature_names, show=False)
@@ -173,8 +182,8 @@ explainer = FlowExplainer(
 )
 
 results = explainer(X_test)
-# results.phi_Z: Z-space importance
-# results.phi_X: same as phi_Z (Z-space methods)
+# results.get_phi_Z(): Z-space importance
+# results.get_phi_X(): same as phi_Z (Z-space methods)
 
 # Confidence intervals
 ci = explainer.conf_int(alpha=0.05, target="Z", alternative="two-sided")
