@@ -14,7 +14,8 @@ from ..utils import (
     compute_latent_independence,
     compute_mmd,
 )
-from ..losses import resolve_loss
+from ..losses import brier, resolve_loss, squared_error
+from ..results import ConfIntResults, ExplanationResults
 
 
 class Explainer:
@@ -123,25 +124,163 @@ class Explainer:
         self._last_results = results
         self._last_n = n
 
+    # ------------------------------------------------------------------
+    # Gaussian geometry (OTExplainer, EOTExplainer)
+    # ------------------------------------------------------------------
+    def _whiten(self, data: np.ndarray) -> None:
+        """Fit the Gaussian whitening of ``data``: ``mean``, ``cov``,
+        ``L = cov^{1/2}`` and ``L_inv``, with the eigenvalues of ``cov`` clipped
+        below at ``regularize``."""
+        self.mean = np.mean(data, axis=0, keepdims=True)
+        cov = np.cov(data, rowvar=False, ddof=0)
+        self.cov = (cov + cov.T) / 2
+        eigenvals, eigenvecs = np.linalg.eigh(self.cov)
+        eigenvals = np.maximum(eigenvals, self.regularize)
+        self.L = (eigenvecs * eigenvals ** 0.5) @ eigenvecs.T
+        self.L_inv = (eigenvecs * eigenvals ** -0.5) @ eigenvecs.T
+
+    def _set_random_state(self, random_state: Optional[int]) -> None:
+        """Store ``random_state`` (``None`` means 0) and the seed sequence from
+        which :meth:`_call_key` spawns each call's Monte Carlo streams."""
+        self.random_state = 0 if random_state is None else random_state
+        self._seeds = np.random.SeedSequence(self.random_state)
+
+    def _call_key(self) -> int:
+        """Seed for one call's Monte Carlo draws.
+
+        Each call spawns a new key from ``random_state``, so successive calls
+        (e.g. on chunks of a test set) use independent draws, while a sequence
+        of calls is reproducible.
+        """
+        return int(self._seeds.spawn(1)[0].generate_state(1)[0])
+
+    def _set_pool(self, X: np.ndarray) -> None:
+        """Set the latent pool ``Z_full`` that counterfactuals resample from to
+        the latent features of ``X``; :class:`Crossfitting` restricts it to the
+        training fold."""
+        raise NotImplementedError
+
+    def _ueifs(
+        self, X: np.ndarray, y: Optional[np.ndarray] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Per-sample UEIFs ``(ueifs_X, ueifs_Z)`` for ``X``, each of shape
+        (n, d); shared by ``__call__`` and :class:`Crossfitting`."""
+        raise NotImplementedError
+
+    @staticmethod
+    def _moments(ueifs_X: np.ndarray, ueifs_Z: np.ndarray) -> dict:
+        """Importance, standard deviation and standard error of per-sample
+        UEIFs in X- and Z-space."""
+        n = ueifs_X.shape[0]
+        ddof = 1 if n > 1 else 0
+        return {
+            "phi_X": np.mean(ueifs_X, axis=0),
+            "std_X": np.std(ueifs_X, axis=0),
+            "se_X": np.std(ueifs_X, axis=0, ddof=ddof) / np.sqrt(n),
+            "phi_Z": np.mean(ueifs_Z, axis=0),
+            "std_Z": np.std(ueifs_Z, axis=0),
+            "se_Z": np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n),
+        }
+
+    def _explain(self, X: np.ndarray, y: Optional[np.ndarray]) -> ExplanationResults:
+        """Shared ``__call__``: aggregate the per-sample UEIFs of ``X``."""
+        self.ueifs_X, self.ueifs_Z = self._ueifs(X, y)
+        results = self._moments(self.ueifs_X, self.ueifs_Z)
+        n = X.shape[0]
+        self._cache_results(results, n)
+        return ExplanationResults(results, explainer_name=type(self).__name__, n=n)
+
+    # ------------------------------------------------------------------
+    # Printing
+    # ------------------------------------------------------------------
+    #: Attributes shown in the printed representation when present.
+    _REPR_PARAMS = ("method", "nsamples", "sampling_method", "random_state")
+
+    def _repr_loss(self) -> str:
+        loss = getattr(self, "loss", None)
+        if loss is None:
+            return "squared_error (default)"
+        if isinstance(loss, str):
+            return loss
+        return getattr(loss, "__name__", type(loss).__name__)
+
+    def _repr_lines(self) -> list:
+        lines = [type(self).__name__]
+        data = getattr(self, "data", None)
+        if data is not None:
+            shape = np.shape(data)
+            if len(shape) == 2:
+                lines.append(
+                    f"  Background data: {shape[0]} samples x {shape[1]} features"
+                )
+            else:
+                lines.append(f"  Background data: shape {shape}")
+        else:
+            lines.append("  Background data: none")
+        params = [
+            f"{k}={getattr(self, k)!r}" for k in self._REPR_PARAMS if hasattr(self, k)
+        ]
+        params.append(f"loss={self._repr_loss()}")
+        lines.append("  Settings: " + ", ".join(params))
+        diag = getattr(self, "diagnostics", None)
+        if isinstance(diag, dict) and "latent_independence_label" in diag:
+            lines.append(
+                "  Diagnostics: latent independence "
+                f"{diag.get('latent_independence_label')}, distribution fidelity "
+                f"{diag.get('distribution_fidelity_label')}"
+            )
+        if getattr(self, "_last_results", None) is None:
+            lines.append(
+                "  Status: not yet applied; call explainer(X) to compute importance"
+            )
+        else:
+            lines.append(
+                f"  Status: importance computed on {getattr(self, '_last_n', None)} "
+                "samples; "
+                "see .conf_int() or .summary()"
+            )
+        return lines
+
+    def __repr__(self) -> str:
+        try:
+            return "\n".join(self._repr_lines())
+        except Exception:
+            return type(self).__name__
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
     def _ueif_from_counterfactuals(
         self,
         y_pred: np.ndarray,
         y_tilde_all: np.ndarray,
         method: str = "cpi",
         y_true: Optional[np.ndarray] = None,
+        base_var: Optional[np.ndarray] = None,
+        rep_var: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Per-feature uncentered EIF from counterfactual predictions.
 
         Generalises the L2 residual-difference importance to an arbitrary loss
-        ``L = self._loss``.  Two averaging orders (formalised in the FDFI docs)
-        are selected via ``method``:
+        ``L = self._loss``.  The averaging order (formalised in the FDFI docs)
+        is selected via ``method``:
 
         - ``'cpi'`` (the normalized FDFI convention): apply the loss to each
           replicate, average the loss differences, and multiply by one half —
-          ``0.5 * E_b[L(r, ŷ_b) - L(r, ŷ)]``.
+          ``0.5 * E_b[L(r, ŷ_b) - L(r, ŷ)]``.  With outcomes and the squared
+          error the orthogonalizing term ``(y - ŷ)(ŷ - E_b[ŷ_b])`` is added,
+          which removes the first-order bias in the regression error.
         - ``'scpi'`` (Sobol-CPI): average the counterfactual predictions first,
           then apply the loss — ``L(r, E_b[ŷ_b]) - L(r, ŷ)``.
+
+        When the baseline ``ŷ`` and the replicates ``ŷ_b`` are Monte Carlo
+        averages (the EOT latent regression), ``base_var`` and ``rep_var`` are
+        their Monte Carlo variances, and ``'cpi'`` removes the bias they cause
+        under the squared error; without ``rep_var`` the replicates are taken
+        to have the baseline's variance on average.  The
+        squared error is recognized as the built-in ``squared_error`` or
+        ``brier`` loss.
 
         The factor one half makes CPI target the same population quantity as
         SCPI under squared loss, an exact disentangling map, and a Bayes
@@ -171,7 +310,8 @@ class Explainer:
         Parameters
         ----------
         y_pred : ndarray of shape (n,)
-            Model predictions on the observed inputs (the baseline ``ŷ``).
+            Baseline predictions ``ŷ``: the model at the observed inputs, or the
+            EOT latent regression at the observed latent features.
         y_tilde_all : ndarray of shape (B, n)
             Counterfactual predictions for the ``B`` Monte-Carlo replicates of
             the perturbed feature.
@@ -180,6 +320,11 @@ class Explainer:
         y_true : ndarray of shape (n,), optional
             True outcomes.  When omitted, the label-free divergence form above is
             used.
+        base_var : ndarray of shape (n,), optional
+            Monte Carlo variance of ``y_pred``; None when ``y_pred`` is exact.
+        rep_var : ndarray of shape (n,), optional
+            Monte Carlo variance of the counterfactual predictions, averaged
+            over the ``B`` replicates (``'cpi'``).
 
         Returns
         -------
@@ -190,6 +335,7 @@ class Explainer:
         method = (method or "cpi").lower()
         if method not in ("cpi", "scpi"):
             raise ValueError(f"method must be 'cpi' or 'scpi', got {method!r}")
+        squared = loss in (squared_error, brier)
 
         if y_true is None:
             # Label-free: reference is the model's own prediction; subtract the
@@ -202,13 +348,32 @@ class Explainer:
             ref = np.asarray(y_true)
             base = loss(ref, y_pred)
 
+        y_pred = np.asarray(y_pred, dtype=float)
+        y_tilde_all = np.asarray(y_tilde_all, dtype=float)
+        m = y_tilde_all.mean(axis=0)
+        v0 = 0.0 if base_var is None else np.asarray(base_var, dtype=float)
+
         if method == "cpi":
             perturbed = loss(ref[None, :], y_tilde_all).mean(axis=0)
-            return 0.5 * (perturbed - base)
+            if squared:
+                # Each squared replicate loss carries the replicate's Monte
+                # Carlo variance.
+                perturbed = perturbed - (v0 if rep_var is None else rep_var)
+            score = 0.5 * (perturbed - base)
+            if squared and y_true is not None:
+                # Orthogonalized CPI: (y - ŷ)(ŷ - mean_b ŷ_b) removes the
+                # first-order bias in the regression error, so the expectation
+                # matches the SCPI estimand.  The Monte Carlo noise of ŷ enters
+                # -0.5 (y - ŷ)^2 and this product, hence + 1.5 v0.
+                score = score + (ref - y_pred) * (y_pred - m) + 1.5 * v0
+            elif squared:
+                # 0.5 (ŷ - ŷ_b)^2 also carries half the variance of ŷ.
+                score = score - 0.5 * v0
+            return score
 
         # Sobol-CPI estimates the restricted prediction by averaging the
         # counterfactual predictions before evaluating the loss.
-        return loss(ref, y_tilde_all.mean(axis=0)) - base
+        return loss(ref, m) - base
 
 
     def _adjust_se(
@@ -251,7 +416,7 @@ class Explainer:
         margin_quantile: float = 0.95,
         alternative: str = "two-sided",
         verbose: bool = False,
-    ) -> dict:
+    ) -> ConfIntResults:
         """
         Compute confidence intervals and significance statistics for feature importance.
 
@@ -287,14 +452,20 @@ class Explainer:
         margin_quantile : float, default=0.95
             Quantile for the 'mixture' margin method.
         alternative : str, default='two-sided'
-            Alternative hypothesis ('two-sided', 'greater', or 'less').
+            Interval type ('two-sided', 'greater', or 'less'). With
+            'two-sided' and 'greater', a unit is significant when its interval
+            lies above ``margin``, testing ``H0: phi <= margin``; the
+            two-sided p-value is ``min(1, 2 * P(Z > zscore))``. With 'less',
+            it is significant when its interval lies below ``margin``.
         verbose : bool, default=False
             Whether to print debug information.
 
         Returns
         -------
-        dict
-            Dictionary with the following keys (each an array of length *d* or *G*):
+        ConfIntResults
+            Inference results with ``get_*()`` accessors,
+            ``to_frame()`` and ``significant()``. Fields include (arrays of
+            length *d* or *G*):
 
             - ``'score'``: estimated feature importance (mean UEIF).
             - ``'se'``: standard error of the mean UEIF (after variance floor).
@@ -303,12 +474,12 @@ class Explainer:
             - ``'ci_lower'``: lower confidence interval bound.
             - ``'ci_upper'``: upper confidence interval bound.
             - ``'reject_null'``: boolean array, True where null is rejected.
-            - ``'pvalue'``: two-sided or one-sided p-value.
+            - ``'pvalue'``: p-value for the test described under ``alternative``.
             - ``'margin'``: null hypothesis margin used.
             - ``'margin_method'``: method used to select the margin.
             - ``'alternative'``: alternative hypothesis string.
 
-            Additional keys added when applicable:
+            Additional fields available when applicable:
 
             - ``'groups'``: list of group names (when ``groups`` is provided).
             - ``'pvalue_adj'``: multiple-testing-adjusted p-values (when
@@ -395,9 +566,11 @@ class Explainer:
                 z = stats.norm.ppf(1 - alpha / 2)
                 ci_lower = phi_hat - z * se_adj
                 ci_upper = phi_hat + z * se_adj
-                reject_null = (ci_lower > margin) | (ci_upper < margin)
-                z_scores = np.abs(phi_hat - margin) / se_adj
-                pvalues = 2 * (1 - stats.norm.cdf(z_scores))
+                # Importance below the margin is practically null, so only an
+                # interval above the margin rejects H0: phi <= margin.
+                reject_null = ci_lower > margin
+                z_scores = (phi_hat - margin) / se_adj
+                pvalues = np.minimum(2 * stats.norm.sf(z_scores), 1.0)
             else:
                 raise ValueError(
                     "alternative must be 'greater', 'less', or 'two-sided'"
@@ -448,7 +621,7 @@ class Explainer:
 
         if groups is not None:
             out["groups"] = group_names
-        return out
+        return ConfIntResults(out, alpha=alpha, target=target)
 
     # ------------------------------------------------------------------
     # Margin estimation helpers
@@ -512,29 +685,40 @@ class Explainer:
 
         Uses log-transformed phi values so that a jump from 0.03 → 0.57
         (~19×) dominates over a jump from 3.6 → 6.2 (~1.7×).
-        The margin is set to the value at the top of the lower cluster.
+        The margin is set to the value at the top of the lower cluster, and at
+        least zero, as for the mixture rule (null scores estimate zero and can
+        be negative).
         """
         vals = np.sort(phi_hat)
         if len(vals) < 2:
             return 0.0
-        # Work in log-space; shift by a small fraction to handle zeros
-        floor = max(vals[vals > 0].min() * 1e-2, 1e-12) if np.any(vals > 0) else 1e-12
+        # Work in log-space above a floor.  A negative score is pure noise, so
+        # its magnitude sets the floor and scores within it share one level;
+        # otherwise a small fraction of the smallest positive score handles zeros.
+        if vals[0] < 0:
+            floor = -vals[0]
+        elif np.any(vals > 0):
+            floor = max(vals[vals > 0].min() * 1e-2, 1e-12)
+        else:
+            floor = 1e-12
         log_vals = np.log(np.maximum(vals, floor))
         log_gaps = np.diff(log_vals)
         k = int(np.argmax(log_gaps))      # index of the lower-side element
-        margin = float(vals[k])           # top of the null cluster
+        margin = max(float(vals[k]), 0.0)  # top of the null cluster
         if verbose:
             print(
                 f"[margin] gap: sorted phi range [{vals[0]:.4f}, {vals[-1]:.4f}], "
                 f"largest log-gap between rank {k} ({vals[k]:.4f}) and {k+1} "
-                f"({vals[k+1]:.4f}), ratio={vals[k+1]/(vals[k]+1e-15):.1f}x, "
+                f"({vals[k+1]:.4f}), ratio={np.exp(log_gaps[k]):.1f}x, "
                 f"margin={margin:.4f}"
             )
         return margin
 
-    def summary(self, alpha: float = 0.05, print_output: bool = True, **kwargs) -> str:
+    def summary(
+        self, alpha: float = 0.05, print_output: bool = True, **kwargs
+    ) -> Optional[str]:
         """
-        Print and return a formatted feature importance summary table.
+        Print a formatted feature importance summary table.
 
         Computes confidence intervals via :meth:`conf_int` and formats the
         results as a human-readable table.  Supports both individual-feature
@@ -564,9 +748,9 @@ class Explainer:
 
         Returns
         -------
-        str
-            The formatted summary string (same text that is printed when
-            ``print_output=True``).
+        None or str
+            ``None`` when ``print_output=True`` (the table is printed to stdout).
+            The formatted table as a string when ``print_output=False``.
 
         Examples
         --------
@@ -586,7 +770,11 @@ class Explainer:
             )
         """
         results = self.conf_int(alpha=alpha, **kwargs)
-        return self._format_summary(results, alpha, print_output)
+        text = self._format_summary(results, alpha)
+        if print_output:
+            print(text)
+            return None
+        return text
 
     # ------------------------------------------------------------------
     # Group importance
@@ -666,36 +854,36 @@ class Explainer:
         )
 
         return {
-            "groups": np.array(results["groups"]),
-            "importance": results["score"],
-            "se": results["se"],
-            "zscore": results["zscore"],
-            "pvalue": results["pvalue"],
+            "groups": np.array(results.get_groups()),
+            "importance": results.get_score(),
+            "se": results.get_se(),
+            "zscore": results.get_zscore(),
+            "pvalue": results.get_pvalue(),
         }
 
 
-    def _format_summary(self, results: dict, alpha: float, print_output: bool = True) -> str:
+    def _format_summary(self, results: ConfIntResults, alpha: float) -> str:
         lines = []
         lines.append("=" * 78)
         lines.append("Feature Importance Results")
         lines.append("=" * 78)
         lines.append(f"Method: {self.__class__.__name__}")
-        lines.append(f"Number of units: {len(results['score'])}")
+        lines.append(f"Number of units: {len(results.get_score())}")
         lines.append(f"Significance level: {alpha}")
-        lines.append(f"Alternative: {results['alternative']}")
+        lines.append(f"Alternative: {results.get_alternative()}")
         
-        multitest_method = results.get("multitest_method")
+        multitest_method = results.get_multitest_method()
         if multitest_method:
             lines.append(f"Multiple testing: {multitest_method}")
             
-        margin_method_str = results.get("margin_method", "")
+        margin_method_str = results.get_margin_method()
         if margin_method_str:
             lines.append(f"Margin method: {margin_method_str}")
-        if results["margin"] > 0:
-            lines.append(f"Practical margin: {results['margin']:.4f}")
+        if results.get_margin() > 0:
+            lines.append(f"Practical margin: {results.get_margin():.4f}")
         lines.append("-" * 78)
 
-        has_groups = "groups" in results
+        has_groups = results.get_groups() is not None
         unit_label = "Group" if has_groups else "Feature"
         pval_label = "Adj P-val" if multitest_method else "P-value"
         header = (
@@ -705,10 +893,10 @@ class Explainer:
         lines.append(header)
         lines.append("-" * 78)
 
-        has_pvalue_adj = "pvalue_adj" in results
-        for i in range(len(results["score"])):
-            ci_lower = results["ci_lower"][i]
-            ci_upper = results["ci_upper"][i]
+        has_pvalue_adj = results.get_pvalue_adj() is not None
+        for i in range(len(results.get_score())):
+            ci_lower = results.get_ci_lower()[i]
+            ci_upper = results.get_ci_upper()[i]
             ci_upper_str = (
                 f"{ci_upper:>10.4f}" if np.isfinite(ci_upper) else f"{'inf':>10}"
             )
@@ -716,31 +904,28 @@ class Explainer:
                 f"{ci_lower:>10.4f}" if np.isfinite(ci_lower) else f"{'-inf':>10}"
             )
             
-            pval = results["pvalue_adj"][i] if has_pvalue_adj else results["pvalue"][i]
+            pval = results.get_pvalue_adj()[i] if has_pvalue_adj else results.get_pvalue()[i]
             sig = (
                 "***"
                 if pval < 0.01
                 else ("**" if pval < 0.05 else ("*" if pval < 0.1 else ""))
             )
-            name = str(results["groups"][i]) if has_groups else str(i)
+            name = str(results.get_groups()[i]) if has_groups else str(i)
             row = (
-                f"{name:>15} {results['score'][i]:>10.4f} "
-                f"{results['se'][i]:>10.4f} {ci_lower_str} {ci_upper_str} "
+                f"{name:>15} {results.get_score()[i]:>10.4f} "
+                f"{results.get_se()[i]:>10.4f} {ci_lower_str} {ci_upper_str} "
                 f"{pval:>10.4f} {sig:>5}"
             )
             lines.append(row)
 
         lines.append("=" * 78)
-        n_sig = np.sum(results["reject_null"])
-        lines.append(f"Significant units: {n_sig} / {len(results['score'])}")
+        n_sig = np.sum(results.get_reject_null())
+        lines.append(f"Significant units: {n_sig} / {len(results.get_score())}")
         lines.append("---")
         lines.append("Signif. codes:  0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1")
         lines.append("=" * 78)
 
-        output = "\n".join(lines)
-        if print_output:
-            print(output)
-        return output
+        return "\n".join(lines)
 
     def _log(self, message: str, level: str = "INFO") -> None:
         """Consistent, verbosity-aware logging with unified style."""

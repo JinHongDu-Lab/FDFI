@@ -1,0 +1,28 @@
+name: fdfi-replication
+channels:
+  - conda-forge
+dependencies:
+  # ===== Python =====
+  - python=3.10.19
+  - pip
+
+  - pip:
+      # ===== FDFI 0.2.1 (bundled source with get_* result accessors) =====
+      - ./fdfi-0.2.1.tar.gz
+
+      # ===== FDFI core dependencies =====
+      - numpy==2.2.6
+      - scipy==1.15.3
+      - scikit-learn==1.7.2
+      - matplotlib==3.10.9
+      - statsmodels==0.14.6
+
+      # ===== FDFI flow dependencies ([flow] extra) =====
+      - torch==2.13.0
+      - torchdiffeq==0.2.5
+      - tqdm==4.70.0
+
+      # ===== Case studies =====
+      - pandas==2.3.3
+      - threadpoolctl==3.8.0
+      - xlrd==2.0.2            # reads data/CTG.xls

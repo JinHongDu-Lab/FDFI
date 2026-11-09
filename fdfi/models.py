@@ -70,6 +70,7 @@ class FlowMatchingModel:
         self.time_embed_dim = time_embed_dim
         self.num_blocks = num_blocks
         self.use_bn = use_bn
+        self._is_trained = False
 
         self.set_data(X)
 
@@ -80,6 +81,17 @@ class FlowMatchingModel:
             num_blocks=num_blocks,
             use_bn=use_bn
         ).to(self.device)
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(dim={self.dim}, hidden_dim={self.hidden_dim}, "
+            f"time_embed_dim={self.time_embed_dim}, num_blocks={self.num_blocks}, "
+            f"sigma_min={self.sigma_min}, device={self.device}, "
+            f"trained={getattr(self, '_is_trained', False)})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     def set_data(self, X_np):
         if isinstance(X_np, torch.Tensor):
@@ -153,6 +165,7 @@ class FlowMatchingModel:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            self._is_trained = True
 
             losses.append(loss.item())
             if show_progress:

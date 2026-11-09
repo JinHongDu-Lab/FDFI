@@ -61,7 +61,7 @@ Quick Example
    ci = explainer.conf_int(alpha=0.05, alternative="greater", multitest_method="fdr_bh")
 
    feature_names = [f"X{i}" for i in range(X_background.shape[1])]
-   summary_bar(results["phi_X"], results["se_X"], feature_names, show=False)
+   summary_bar(results.get_phi_X(), results.get_se_X(), feature_names, show=False)
 
 Installation
 ------------

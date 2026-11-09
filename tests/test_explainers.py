@@ -62,7 +62,8 @@ class TestExplainer:
             explainer.shap_values(X)
 
     def test_cpi_matches_normalized_fdfi_formula(self):
-        """CPI is one half of the mean per-resample loss difference."""
+        """CPI is one half of the mean per-resample loss difference plus the
+        orthogonalizing term (y - ŷ)(ŷ - mean_b ŷ_b) for the squared error."""
         explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
         y_pred = np.array([0.0, 1.0, 2.0])
         y_true = np.array([1.0, 3.0, -1.0])
@@ -76,6 +77,7 @@ class TestExplainer:
         )
         base = (y_true - y_pred) ** 2
         expected = 0.5 * (((y_true[None, :] - y_tilde) ** 2).mean(axis=0) - base)
+        expected = expected + (y_true - y_pred) * (y_pred - y_tilde.mean(axis=0))
 
         assert np.allclose(actual, expected)
 
@@ -97,7 +99,8 @@ class TestExplainer:
         assert np.allclose(actual, expected)
 
     def test_l2_finite_resample_identity(self):
-        """For L2, 2*CPI = SCPI + the counterfactual prediction variance."""
+        """For L2, 2*CPI = SCPI + the counterfactual prediction variance
+        + 2 (y - ŷ)(ŷ - mean_b ŷ_b), the orthogonalizing term carried by CPI."""
         explainer = Explainer(lambda x: x[:, 0], fit_flow=False)
         y_pred = np.array([0.0, 1.0, 2.0])
         y_true = np.array([1.0, 3.0, -1.0])
@@ -114,7 +117,8 @@ class TestExplainer:
             y_pred, y_tilde, method="scpi", y_true=y_true
         )
 
-        assert np.allclose(2.0 * cpi, scpi + y_tilde.var(axis=0))
+        ortho = (y_true - y_pred) * (y_pred - y_tilde.mean(axis=0))
+        assert np.allclose(2.0 * cpi, scpi + y_tilde.var(axis=0) + 2.0 * ortho)
 
 
 def generate_exp3_data(n=500, rho=0.8, seed=42):
@@ -148,15 +152,16 @@ class TestOTExplainer:
         explainer = OTExplainer(exp3_model, X_train, nsamples=15, random_state=0)
         results = explainer(X_test)
 
-        assert results["phi_X"].shape == (50,)
-        assert results["std_X"].shape == (50,)
-        assert results["se_X"].shape == (50,)
-        assert np.all(np.isfinite(results["phi_X"]))
-        assert np.all(results["std_X"] >= 0)
+        assert results.get_phi_X().shape == (50,)
+        assert results.get_std_X().shape == (50,)
+        assert results.get_se_X().shape == (50,)
+        assert np.all(np.isfinite(results.get_phi_X()))
+        assert np.all(results.get_std_X() >= 0)
 
         Z = (X_test - explainer.mean) @ explainer.L_inv
         y_pred = exp3_model(X_test)
-        ueifs_Z = explainer._phi_Z(Z, y_pred)
+        explainer._set_random_state(explainer.random_state)  # key of the first call
+        ueifs_Z = explainer._phi_Z(Z, y_pred, explainer._call_key())
 
         ueifs_X = ueifs_Z @ (explainer.L ** 2).T
         phi_X = np.mean(ueifs_X, axis=0)
@@ -168,12 +173,12 @@ class TestOTExplainer:
         std_Z = np.std(ueifs_Z, axis=0)
         se_Z = np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n)
 
-        assert np.allclose(phi_X, results["phi_X"])
-        assert np.allclose(std_X, results["std_X"])
-        assert np.allclose(se_X, results["se_X"])
-        assert np.allclose(phi_Z, results["phi_Z"])
-        assert np.allclose(std_Z, results["std_Z"])
-        assert np.allclose(se_Z, results["se_Z"])
+        assert np.allclose(phi_X, results.get_phi_X())
+        assert np.allclose(std_X, results.get_std_X())
+        assert np.allclose(se_X, results.get_se_X())
+        assert np.allclose(phi_Z, results.get_phi_Z())
+        assert np.allclose(std_Z, results.get_std_Z())
+        assert np.allclose(se_Z, results.get_se_Z())
 
         active_mean = phi_X[:5].mean()
         null_mean = phi_X[10:].mean()
@@ -181,8 +186,8 @@ class TestOTExplainer:
         ci = explainer.conf_int(
             alpha=0.05, target="X", alternative="two-sided", var_floor_c=0.0
         )
-        assert np.all(ci["ci_lower"][:10] > 0)
-        assert "score" in ci
+        assert np.all(ci.get_ci_lower()[:10] > 0)
+        assert ci.get_score() is not None
 
     def test_diagnostics_populated(self):
         X_train, _ = generate_exp3_data(n=120, seed=11)
@@ -217,17 +222,14 @@ class TestEOTExplainer:
         explainer = EOTExplainer(exp3_model, X_train)
         results = explainer(X_test)
 
-        assert results["phi_X"].shape == (50,)
-        assert results["std_X"].shape == (50,)
-        assert results["se_X"].shape == (50,)
-        assert np.all(np.isfinite(results["phi_X"]))
-        assert np.all(results["std_X"] >= 0)
+        assert results.get_phi_X().shape == (50,)
+        assert results.get_std_X().shape == (50,)
+        assert results.get_se_X().shape == (50,)
+        assert np.all(np.isfinite(results.get_phi_X()))
+        assert np.all(results.get_std_X() >= 0)
 
-        Z = explainer.s_fwd * (X_test - explainer.mean) @ explainer.L_inv
-        y_pred = exp3_model(X_test)
-        ueifs_Z = explainer._phi_Z(Z, y_pred)
-
-        ueifs_X = ueifs_Z @ (explainer.W ** 2).T
+        explainer._set_random_state(explainer.random_state)  # replay the first call
+        ueifs_X, ueifs_Z = explainer._ueifs(X_test)
         phi_X = np.mean(ueifs_X, axis=0)
         std_X = np.std(ueifs_X, axis=0)
         n = ueifs_X.shape[0]
@@ -237,12 +239,12 @@ class TestEOTExplainer:
         std_Z = np.std(ueifs_Z, axis=0)
         se_Z = np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n)
 
-        assert np.allclose(phi_X, results["phi_X"])
-        assert np.allclose(std_X, results["std_X"])
-        assert np.allclose(se_X, results["se_X"])
-        assert np.allclose(phi_Z, results["phi_Z"])
-        assert np.allclose(std_Z, results["std_Z"])
-        assert np.allclose(se_Z, results["se_Z"])
+        assert np.allclose(phi_X, results.get_phi_X())
+        assert np.allclose(std_X, results.get_std_X())
+        assert np.allclose(se_X, results.get_se_X())
+        assert np.allclose(phi_Z, results.get_phi_Z())
+        assert np.allclose(std_Z, results.get_std_Z())
+        assert np.allclose(se_Z, results.get_se_Z())
 
         active_mean = phi_X[:5].mean()
         null_mean = phi_X[10:].mean()
@@ -250,8 +252,8 @@ class TestEOTExplainer:
         ci = explainer.conf_int(
             alpha=0.05, target="X", alternative="two-sided", var_floor_c=0.0
         )
-        assert np.all(ci["ci_lower"][:10] > 0)
-        assert "score" in ci
+        assert np.all(ci.get_ci_lower()[:10] > 0)
+        assert ci.get_score() is not None
 
     def test_margin_method_auto_uses_gap_for_small_d(self):
         """auto margin should use gap method when d < 30."""
@@ -262,7 +264,7 @@ class TestEOTExplainer:
 
         ci = explainer.conf_int(alpha=0.05, target="X", alternative="greater")
         # exp3 has d=50 features, so auto should pick mixture
-        assert ci["margin_method"] == "mixture"
+        assert ci.get_margin_method() == "mixture"
 
         # Now test with a small-d model
         rng = np.random.default_rng(30)
@@ -273,8 +275,8 @@ class TestEOTExplainer:
         exp_s = EOTExplainer(model_s, X_s, nsamples=5, random_state=0)
         exp_s(X_st)
         ci_s = exp_s.conf_int(alpha=0.05, target="X", alternative="greater")
-        assert ci_s["margin_method"] == "gap"
-        assert ci_s["margin"] >= 0
+        assert ci_s.get_margin_method() == "gap"
+        assert ci_s.get_margin() >= 0
 
     def test_margin_method_fixed(self):
         """fixed margin should use the provided value."""
@@ -286,8 +288,8 @@ class TestEOTExplainer:
             alpha=0.05, target="X", alternative="greater",
             margin=0.5, margin_method="fixed",
         )
-        assert ci["margin"] == 0.5
-        assert ci["margin_method"] == "fixed"
+        assert ci.get_margin() == 0.5
+        assert ci.get_margin_method() == "fixed"
 
     def test_margin_method_gap_explicit(self):
         """Explicitly requesting gap method."""
@@ -299,8 +301,15 @@ class TestEOTExplainer:
             alpha=0.05, target="X", alternative="greater",
             margin_method="gap",
         )
-        assert ci["margin_method"] == "gap"
-        assert ci["margin"] >= 0
+        assert ci.get_margin_method() == "gap"
+        assert ci.get_margin() >= 0
+
+    def test_gap_margin_with_mixed_sign_null_scores(self):
+        """Null scores of either sign stay in the lower cluster."""
+        phi = np.array([3.67, 1.27, 2.38, 0.347, 1.01, -0.0031, -0.0041, 0.0047, 0.0008, -0.0056])
+        assert Explainer._gap_margin(phi) == pytest.approx(0.0047)
+        assert Explainer._gap_margin(np.array([-0.01, -0.002, 0.5, 1.0])) == 0.0
+        assert Explainer._gap_margin(np.array([0.001, 0.002, 0.5, 1.0])) == pytest.approx(0.002)
 
     def test_diagnostics_populated(self):
         X_train, _ = generate_exp3_data(n=90, seed=13)
@@ -351,7 +360,8 @@ class TestEOTExplainer:
         d = X_train.shape[1]
         assert explainer.W.shape == (d, d)
         assert np.all(np.isfinite(explainer.W))
-        # For perfectly whitened data, W ≈ s * L (population backward = forward)
+        # Jacobian of the barycentric projection of the Gaussian coupling
+        assert np.allclose(explainer.W, explainer.s_fwd * explainer.L)
         assert explainer.s_fwd > 0 and explainer.s_fwd <= 1
 
     def test_decode_from_Z_roundtrip(self):
@@ -460,13 +470,13 @@ class TestFlowExplainer:
         results = explainer(X_test)
         
         expected_keys = ['phi_X', 'std_X', 'se_X', 'phi_Z', 'std_Z', 'se_Z']
-        assert all(key in results for key in expected_keys)
+        assert all(getattr(results, f"get_{key}")().shape == (5,) for key in expected_keys)
         
         # Check shapes
-        assert results['phi_X'].shape == (5,)
-        assert results['phi_Z'].shape == (5,)
-        assert results['std_X'].shape == (5,)
-        assert results['se_X'].shape == (5,)
+        assert results.get_phi_X().shape == (5,)
+        assert results.get_phi_Z().shape == (5,)
+        assert results.get_std_X().shape == (5,)
+        assert results.get_se_X().shape == (5,)
     
     def test_cpi_phi_X_transformed_via_jacobian(self):
         """Test that CPI method transforms phi_Z to phi_X via Jacobian."""
@@ -483,11 +493,11 @@ class TestFlowExplainer:
         
         # phi_X should be transformed from phi_Z via Jacobian
         # They should not be exactly equal due to the transformation
-        assert np.all(np.isfinite(results['phi_X']))
-        assert np.all(np.isfinite(results['phi_Z']))
+        assert np.all(np.isfinite(results.get_phi_X()))
+        assert np.all(np.isfinite(results.get_phi_Z()))
         # Both should be positive (squared differences)
-        assert np.all(results['phi_X'] >= 0)
-        assert np.all(results['phi_Z'] >= 0)
+        assert np.all(results.get_phi_X() >= 0)
+        assert np.all(results.get_phi_Z() >= 0)
     
     def test_scpi_computes_different_importance(self):
         """Test that SCPI method computes importance differently from CPI."""
@@ -503,15 +513,15 @@ class TestFlowExplainer:
         results_scpi = explainer_scpi(X_test)
         
         # SCPI should compute E[(Y - f(X_tilde))^2]
-        assert results_scpi['phi_X'] is not None
-        assert results_scpi['phi_Z'] is not None
-        assert np.all(np.isfinite(results_scpi['phi_Z']))
+        assert results_scpi.get_phi_X() is not None
+        assert results_scpi.get_phi_Z() is not None
+        assert np.all(np.isfinite(results_scpi.get_phi_Z()))
         
         # phi_X is transformed from phi_Z via Jacobian
-        assert np.all(np.isfinite(results_scpi['phi_X']))
+        assert np.all(np.isfinite(results_scpi.get_phi_X()))
         # Both should be positive (squared differences)
-        assert np.all(results_scpi['phi_X'] >= 0)
-        assert np.all(results_scpi['phi_Z'] >= 0)
+        assert np.all(results_scpi.get_phi_X() >= 0)
+        assert np.all(results_scpi.get_phi_Z() >= 0)
     
     def test_sampling_methods(self):
         """Test all sampling methods produce valid results."""
@@ -527,10 +537,10 @@ class TestFlowExplainer:
             
             results = explainer(X_test)
             
-            assert np.all(np.isfinite(results['phi_X']))
-            assert np.all(np.isfinite(results['phi_Z']))
-            assert np.all(results['std_X'] >= 0)
-            assert np.all(results['se_X'] >= 0)
+            assert np.all(np.isfinite(results.get_phi_X()))
+            assert np.all(np.isfinite(results.get_phi_Z()))
+            assert np.all(results.get_std_X() >= 0)
+            assert np.all(results.get_se_X() >= 0)
     
     def test_condperm_sampling(self):
         """Test conditional permutation sampling method."""
@@ -545,8 +555,8 @@ class TestFlowExplainer:
         
         results = explainer(X_test)
         
-        assert np.all(np.isfinite(results['phi_X']))
-        assert np.all(np.isfinite(results['phi_Z']))
+        assert np.all(np.isfinite(results.get_phi_X()))
+        assert np.all(np.isfinite(results.get_phi_Z()))
     
     def test_conf_int_integration(self):
         """Test confidence interval computation."""
@@ -564,12 +574,12 @@ class TestFlowExplainer:
         # Test conf_int
         ci = explainer.conf_int(alpha=0.05, target='X', alternative='two-sided')
         
-        assert 'score' in ci
-        assert 'se' in ci
-        assert 'ci_lower' in ci
-        assert 'ci_upper' in ci
-        assert 'reject_null' in ci
-        assert 'pvalue' in ci
+        assert ci.get_score() is not None
+        assert ci.get_se() is not None
+        assert ci.get_ci_lower() is not None
+        assert ci.get_ci_upper() is not None
+        assert ci.get_reject_null() is not None
+        assert ci.get_pvalue() is not None
     
     def test_active_features_higher_importance(self):
         """Test that active features have higher importance."""
@@ -585,8 +595,8 @@ class TestFlowExplainer:
         results = explainer(X_test)
         
         # Features 0 and 1 should have higher importance than 2, 3, 4
-        active_importance = (results['phi_Z'][0] + results['phi_Z'][1]) / 2
-        null_importance = results['phi_Z'][2:].mean()
+        active_importance = (results.get_phi_Z()[0] + results.get_phi_Z()[1]) / 2
+        null_importance = results.get_phi_Z()[2:].mean()
         
         assert active_importance > null_importance
     
@@ -614,7 +624,7 @@ class TestFlowExplainer:
         # flow training stochasticity and Jacobian computation)
         # Check rank correlation instead of exact values
         from scipy.stats import spearmanr
-        corr, _ = spearmanr(results1['phi_Z'], results2['phi_Z'])
+        corr, _ = spearmanr(results1.get_phi_Z(), results2.get_phi_Z())
         assert corr > 0.5, f"Rank correlation should be positive: {corr}"
 
 
@@ -653,11 +663,11 @@ class TestFlowVsOTExplainer:
         active_idx = [0, 1, 2]
         null_idx = [3, 4, 5, 6, 7]
         
-        flow_active = np.mean([flow_results['phi_X'][i] for i in active_idx])
-        flow_null = np.mean([flow_results['phi_X'][i] for i in null_idx])
+        flow_active = np.mean([flow_results.get_phi_X()[i] for i in active_idx])
+        flow_null = np.mean([flow_results.get_phi_X()[i] for i in null_idx])
         
-        ot_active = np.mean([ot_results['phi_X'][i] for i in active_idx])
-        ot_null = np.mean([ot_results['phi_X'][i] for i in null_idx])
+        ot_active = np.mean([ot_results.get_phi_X()[i] for i in active_idx])
+        ot_null = np.mean([ot_results.get_phi_X()[i] for i in null_idx])
         
         assert flow_active > flow_null, "FlowExplainer should identify active > null"
         assert ot_active > ot_null, "OTExplainer should identify active > null"
@@ -683,7 +693,7 @@ class TestFlowVsOTExplainer:
         ot_results = ot_exp(X_test)
         
         # Correlation should be positive
-        correlation = np.corrcoef(flow_results['phi_X'], ot_results['phi_X'])[0, 1]
+        correlation = np.corrcoef(flow_results.get_phi_X(), ot_results.get_phi_X())[0, 1]
         assert correlation > 0, f"Expected positive correlation, got {correlation}"
 
 
@@ -726,6 +736,33 @@ class TestCrossfittingInit:
             Crossfitting(_simple_model, data, cv=3.14)
 
 
+class TestSeeding:
+    """Calls draw from fresh streams; a sequence of calls is reproducible."""
+
+    @pytest.mark.parametrize("cls", [OTExplainer, EOTExplainer])
+    def test_repeated_calls_draw_independently(self, cls):
+        X = np.random.default_rng(0).standard_normal((60, 3))
+        kw = dict(nsamples=5, compute_diagnostics=False)
+        first = cls(_simple_model, X, **kw)
+        second = cls(_simple_model, X, **kw)
+        a, b = first(X), first(X)
+        assert not np.array_equal(a.get_phi_Z(), b.get_phi_Z())
+        assert np.array_equal(second(X).get_phi_Z(), a.get_phi_Z())
+        assert np.array_equal(second(X).get_phi_Z(), b.get_phi_Z())
+
+    def test_crossfitting_is_reproducible_by_default(self):
+        from sklearn.model_selection import KFold
+
+        X = np.random.default_rng(0).standard_normal((60, 3))
+        runs = [
+            Crossfitting(_simple_model, X, cv=KFold(3, shuffle=True, random_state=0),
+                         nsamples=5)()
+            for _ in range(2)
+        ]
+        assert np.array_equal(runs[0].get_phi_Z(), runs[1].get_phi_Z())
+        assert np.array_equal(runs[0].get_se_X(), runs[1].get_se_X())
+
+
 class TestCrossfittingWithOT:
     """Cross-fitting with OTExplainer."""
 
@@ -739,8 +776,8 @@ class TestCrossfittingWithOT:
         )
         results = cf()
         for key in ("phi_X", "std_X", "se_X", "phi_Z", "std_Z", "se_Z"):
-            assert key in results, f"Missing key {key}"
-            assert results[key].shape == (4,)
+            assert callable(getattr(results, f"get_{key}"))
+            assert getattr(results, f"get_{key}")().shape == (4,)
 
     def test_crossfit_fold_count(self):
         np.random.seed(1)
@@ -777,9 +814,9 @@ class TestCrossfittingWithOT:
         )
         cf()
         ci = cf.conf_int(alpha=0.05)
-        assert "ci_lower" in ci
-        assert "ci_upper" in ci
-        assert ci["ci_lower"].shape == (4,)
+        assert ci.get_ci_lower() is not None
+        assert ci.get_ci_upper() is not None
+        assert ci.get_ci_lower().shape == (4,)
 
     def test_summary_runs(self):
         np.random.seed(4)
@@ -804,7 +841,38 @@ class TestCrossfittingWithOT:
         )
         cf()  # fit folds
         results = cf(X_new)
-        assert results["phi_X"].shape == (4,)
+        assert results.get_phi_X().shape == (4,)
+
+    def test_ensemble_predict_passes_y(self):
+        rng = np.random.default_rng(6)
+        data = rng.standard_normal((80, 4))
+        X_new = rng.standard_normal((20, 4))
+        y_new = _simple_model(X_new)
+        cf = Crossfitting(
+            _simple_model, data,
+            explainer_class=OTExplainer, cv=3, nsamples=10,
+            random_state=0,
+        )
+        cf()
+        seen = []
+
+        class Spy:
+            def __init__(self, inner):
+                self.inner = inner
+
+            def __call__(self, X, y=None):
+                seen.append(y)
+                return self.inner(X, y=y)
+
+        cf.fold_explainers = [Spy(e) for e in cf.fold_explainers]
+        cf(X_new, y=y_new)
+        assert len(seen) == 3 and all(y is y_new for y in seen)
+
+    def test_y_without_new_data_raises(self):
+        data = np.random.default_rng(7).standard_normal((40, 3))
+        cf = Crossfitting(_simple_model, data, explainer_class=OTExplainer, cv=2)
+        with pytest.raises(ValueError, match="Crossfitting\\(y="):
+            cf(y=np.zeros(40))
 
 
 class TestCrossfittingWithEOT:
@@ -819,8 +887,8 @@ class TestCrossfittingWithEOT:
             random_state=0,
         )
         results = cf()
-        assert results["phi_X"].shape == (4,)
-        assert np.all(np.isfinite(results["phi_X"]))
+        assert results.get_phi_X().shape == (4,)
+        assert np.all(np.isfinite(results.get_phi_X()))
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
@@ -836,7 +904,7 @@ class TestCrossfittingWithFlow:
             nsamples=5, num_steps=100, random_state=0,
         )
         results = cf()
-        assert results["phi_X"].shape == (4,)
+        assert results.get_phi_X().shape == (4,)
 
 
 class TestCrossfittingSplitters:
@@ -854,7 +922,7 @@ class TestCrossfittingSplitters:
             y=y, nsamples=5, random_state=0,
         )
         results = cf()
-        assert results["phi_X"].shape == (4,)
+        assert results.get_phi_X().shape == (4,)
 
     def test_shuffle_split(self):
         from sklearn.model_selection import ShuffleSplit
@@ -867,7 +935,7 @@ class TestCrossfittingSplitters:
             nsamples=5, random_state=0,
         )
         results = cf()
-        assert results["phi_X"].shape == (4,)
+        assert results.get_phi_X().shape == (4,)
 
     def test_repeated_kfold(self):
         from sklearn.model_selection import RepeatedKFold
@@ -880,7 +948,7 @@ class TestCrossfittingSplitters:
             nsamples=5, random_state=0,
         )
         results = cf()
-        assert results["phi_X"].shape == (3,)
+        assert results.get_phi_X().shape == (3,)
         # All 60 samples should have been evaluated
         assert cf.ueifs_X.shape[0] == 60
 
@@ -896,7 +964,7 @@ class TestCrossfittingSplitters:
             groups=groups, nsamples=5, random_state=0,
         )
         results = cf()
-        assert results["phi_X"].shape == (3,)
+        assert results.get_phi_X().shape == (3,)
 
     def test_custom_splitter(self):
         """Any object with .split() should work."""
@@ -919,7 +987,7 @@ class TestCrossfittingSplitters:
         )
         results = cf()
         assert len(cf.fold_explainers) == 2
-        assert results["phi_X"].shape == (3,)
+        assert results.get_phi_X().shape == (3,)
 
 
 # ── Group importance tests ────────────────────────────────────────────
@@ -994,12 +1062,12 @@ class TestGroupImportanceBehavior:
         groups = {"ab": [0, 1], "cde": [2, 3, 4]}
         res = explainer.conf_int(groups=groups)
         
-        assert "groups" in res
-        assert len(res["groups"]) == 2
-        assert res["score"].shape == (2,)
-        assert "ci_lower" in res
-        assert "ci_upper" in res
-        assert "pvalue" in res
+        assert res.get_groups() is not None
+        assert len(res.get_groups()) == 2
+        assert res.get_score().shape == (2,)
+        assert res.get_ci_lower() is not None
+        assert res.get_ci_upper() is not None
+        assert res.get_pvalue() is not None
 
     def test_threshold_null(self):
         explainer = _make_ot_explainer_with_results()
@@ -1011,7 +1079,7 @@ class TestGroupImportanceBehavior:
             groups=groups, threshold_null=False
         )
         # With thresholding, importance >= without (since we zero negatives)
-        assert res_thresh["score"][0] >= res_no["score"][0] - 1e-12
+        assert res_thresh.get_score()[0] >= res_no.get_score()[0] - 1e-12
 
     def test_se_adjustment(self):
         explainer = _make_ot_explainer_with_results()
@@ -1024,7 +1092,7 @@ class TestGroupImportanceBehavior:
             groups=groups, var_floor_c=0.0, var_floor_method="fixed"
         )
         # With adjustment, SE should be larger
-        assert res_adj["se"][0] >= res_no_adj["se"][0]
+        assert res_adj.get_se()[0] >= res_no_adj.get_se()[0]
 
     def test_single_feature_group(self):
         explainer = _make_ot_explainer_with_results()
@@ -1033,22 +1101,22 @@ class TestGroupImportanceBehavior:
         )
         # Should match individual feature importance
         phi_X = explainer.ueifs_X[:, 0].mean()
-        assert np.isclose(res["score"][0], phi_X, atol=1e-10)
+        assert np.isclose(res.get_score()[0], phi_X, atol=1e-10)
 
     def test_target_Z(self):
         explainer = _make_ot_explainer_with_results()
         res = explainer.conf_int(
             groups={"ab": [0, 1]}, target="Z"
         )
-        assert len(res["groups"]) == 1
-        assert np.all(np.isfinite(res["score"]))
+        assert len(res.get_groups()) == 1
+        assert np.all(np.isfinite(res.get_score()))
 
     def test_pvalues_valid(self):
         explainer = _make_ot_explainer_with_results()
         res = explainer.conf_int(groups={"ab": [0, 1], "cde": [2, 3, 4]})
-        assert np.all(res["pvalue"] >= 0)
-        assert np.all(res["pvalue"] <= 1)
-        assert np.all(np.isfinite(res["score"]))
+        assert np.all(res.get_pvalue() >= 0)
+        assert np.all(res.get_pvalue() <= 1)
+        assert np.all(np.isfinite(res.get_score()))
 
     def test_deprecation_warning(self):
         explainer = _make_ot_explainer_with_results()
@@ -1061,30 +1129,45 @@ class TestGroupImportanceBehavior:
 class TestMultipleTesting:
     """Test multiple testing corrections in conf_int."""
 
+    @pytest.mark.parametrize("alternative", ["two-sided", "greater"])
+    def test_scores_below_margin_are_not_significant(self, alternative):
+        explainer = _make_ot_explainer_with_results()
+        margin = 0.5 * explainer._last_results["phi_X"][0]
+        res = explainer.conf_int(
+            margin=margin, margin_method="fixed", var_floor_c=0.0,
+            alternative=alternative,
+        )
+        below = res.get_score() < margin
+        assert below.any()
+        assert not res.get_reject_null()[below].any()
+        assert np.all(res.get_pvalue()[below] >= 0.5)
+        assert np.array_equal(res.get_reject_null(), res.get_ci_lower() > margin)
+        assert np.array_equal(res.get_reject_null(), res.get_pvalue() < 0.05)
+
     def test_conf_int_multitest_bonferroni(self):
         explainer = _make_ot_explainer_with_results()
         # d=5 features
         res = explainer.conf_int(multitest_method="bonferroni")
         
-        assert "pvalue_adj" in res
-        assert "multitest_method" in res
-        assert res["multitest_method"] == "bonferroni"
+        assert res.get_pvalue_adj() is not None
+        assert res.get_multitest_method() is not None
+        assert res.get_multitest_method() == "bonferroni"
         
         # Adjusted p-values should be min(p * 5, 1)
-        expected = np.minimum(res["pvalue"] * 5, 1.0)
-        assert np.allclose(res["pvalue_adj"], expected)
+        expected = np.minimum(res.get_pvalue() * 5, 1.0)
+        assert np.allclose(res.get_pvalue_adj(), expected)
         # reject_null should follow pvalue_adj < alpha
-        assert np.array_equal(res["reject_null"], res["pvalue_adj"] < 0.05)
+        assert np.array_equal(res.get_reject_null(), res.get_pvalue_adj() < 0.05)
 
     def test_conf_int_multitest_fdr_bh(self):
         explainer = _make_ot_explainer_with_results()
         res = explainer.conf_int(multitest_method="fdr_bh")
         
-        assert "pvalue_adj" in res
-        assert res["multitest_method"] == "fdr_bh"
+        assert res.get_pvalue_adj() is not None
+        assert res.get_multitest_method() == "fdr_bh"
         # Adjusted p-values for FDR should be >= raw p-values
-        assert np.all(res["pvalue_adj"] >= res["pvalue"] - 1e-12)
-        assert np.array_equal(res["reject_null"], res["pvalue_adj"] < 0.05)
+        assert np.all(res.get_pvalue_adj() >= res.get_pvalue() - 1e-12)
+        assert np.array_equal(res.get_reject_null(), res.get_pvalue_adj() < 0.05)
 
     def test_summary_with_multitest(self):
         explainer = _make_ot_explainer_with_results()
@@ -1146,8 +1229,8 @@ class TestArbitraryLossOT:
         e_l2 = OTExplainer(model, X, nsamples=15, random_state=0, loss="squared_error")
         r_default = e_default(X[:80])
         r_l2 = e_l2(X[:80])
-        assert np.allclose(r_default["phi_Z"], r_l2["phi_Z"], atol=1e-12)
-        assert np.allclose(r_default["phi_X"], r_l2["phi_X"], atol=1e-12)
+        assert np.allclose(r_default.get_phi_Z(), r_l2.get_phi_Z(), atol=1e-12)
+        assert np.allclose(r_default.get_phi_X(), r_l2.get_phi_X(), atol=1e-12)
 
     def test_cpi_scpi_l2_population_agreement(self):
         """Normalized CPI and SCPI agree up to finite-sample Monte Carlo error."""
@@ -1166,7 +1249,7 @@ class TestArbitraryLossOT:
         # Compare active latent directions. Null directions have population
         # importance zero, so relative tolerances are not informative there.
         assert np.allclose(
-            r_cpi["phi_Z"][:2], r_scpi["phi_Z"][:2], rtol=0.12, atol=0.08
+            r_cpi.get_phi_Z()[:2], r_scpi.get_phi_Z()[:2], rtol=0.12, atol=0.08
         )
 
     @pytest.mark.parametrize("loss", ["l1", "huber", "pinball"])
@@ -1175,8 +1258,8 @@ class TestArbitraryLossOT:
         Xt, yt = X[:120], y[:120]
         e = OTExplainer(model, X, nsamples=25, random_state=0, loss=loss)
         res = e(Xt, y=yt)
-        active = res["phi_X"][:2].mean()
-        null = res["phi_X"][2:].mean()
+        active = res.get_phi_X()[:2].mean()
+        null = res.get_phi_X()[2:].mean()
         assert active > null
 
     @pytest.mark.parametrize("loss", ["log_loss", "brier"])
@@ -1185,8 +1268,8 @@ class TestArbitraryLossOT:
         Xt, yt = X[:150], y[:150]
         e = OTExplainer(model, X, nsamples=25, random_state=0, loss=loss)
         res = e(Xt, y=yt)
-        active = res["phi_X"][:2].mean()
-        null = np.abs(res["phi_X"][2:]).mean()
+        active = res.get_phi_X()[:2].mean()
+        null = np.abs(res.get_phi_X()[2:]).mean()
         assert active > null
 
     def test_non_l2_without_y_divergence(self):
@@ -1195,17 +1278,17 @@ class TestArbitraryLossOT:
         X, y, model = _binary_classification_dgp(seed=7)
         e = OTExplainer(model, X, nsamples=25, random_state=0, loss="log_loss")
         res = e(X[:150])   # no y
-        assert np.all(np.isfinite(res["phi_X"]))
-        assert res["phi_Z"].min() >= -1e-8   # KL divergence is non-negative
-        assert res["phi_X"][:2].mean() > np.abs(res["phi_X"][2:]).mean()
+        assert np.all(np.isfinite(res.get_phi_X()))
+        assert res.get_phi_Z().min() >= -1e-8   # KL divergence is non-negative
+        assert res.get_phi_X()[:2].mean() > np.abs(res.get_phi_X()[2:]).mean()
 
     def test_l1_without_y_equals_prediction_shift(self):
         # For losses with L(a, a) = 0 the label-free base vanishes.
         X, y, model = _linear_regression_dgp(seed=8)
         e = OTExplainer(model, X, nsamples=20, random_state=0, loss="l1")
         res = e(X[:100])   # no y
-        assert np.all(np.isfinite(res["phi_X"]))
-        assert res["phi_X"][:2].mean() > res["phi_X"][2:].mean()
+        assert np.all(np.isfinite(res.get_phi_X()))
+        assert res.get_phi_X()[:2].mean() > res.get_phi_X()[2:].mean()
 
     def test_invalid_method_raises(self):
         X, y, model = _linear_regression_dgp()
@@ -1222,8 +1305,8 @@ class TestArbitraryLossOT:
 
         e = OTExplainer(model, X, nsamples=20, random_state=0, loss=cubic)
         res = e(Xt, y=yt)
-        assert np.all(np.isfinite(res["phi_X"]))
-        assert res["phi_X"][:2].mean() > res["phi_X"][2:].mean()
+        assert np.all(np.isfinite(res.get_phi_X()))
+        assert res.get_phi_X()[:2].mean() > res.get_phi_X()[2:].mean()
 
 
 class TestArbitraryLossEOT:
@@ -1235,14 +1318,14 @@ class TestArbitraryLossEOT:
         e_l2 = EOTExplainer(model, X, nsamples=15, random_state=0, loss="squared_error")
         r_default = e_default(X[:80])
         r_l2 = e_l2(X[:80])
-        assert np.allclose(r_default["phi_Z"], r_l2["phi_Z"], atol=1e-12)
+        assert np.allclose(r_default.get_phi_Z(), r_l2.get_phi_Z(), atol=1e-12)
 
     def test_log_loss_ranks_active(self):
         X, y, model = _binary_classification_dgp(seed=4)
         Xt, yt = X[:150], y[:150]
         e = EOTExplainer(model, X, nsamples=25, random_state=0, loss="log_loss")
         res = e(Xt, y=yt)
-        assert res["phi_X"][:2].mean() > np.abs(res["phi_X"][2:]).mean()
+        assert res.get_phi_X()[:2].mean() > np.abs(res.get_phi_X()[2:]).mean()
 
 
 class TestArbitraryLossCrossfitting:
@@ -1264,10 +1347,10 @@ class TestArbitraryLossCrossfitting:
             random_state=0,
         )
         results = cf()
-        assert np.all(np.isfinite(results["phi_X"]))
+        assert np.all(np.isfinite(results.get_phi_X()))
         ci = cf.conf_int(alpha=0.05, target="X")
-        assert np.all(np.isfinite(ci["score"]))
-        assert np.all(ci["pvalue"] >= 0) and np.all(ci["pvalue"] <= 1)
+        assert np.all(np.isfinite(ci.get_score()))
+        assert np.all(ci.get_pvalue() >= 0) and np.all(ci.get_pvalue() <= 1)
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="FlowExplainer tests require torch")
@@ -1289,7 +1372,7 @@ class TestArbitraryLossFlow:
         )
         r_default = e_default(X_test)
         r_l2 = e_l2(X_test)
-        assert np.allclose(r_default["phi_Z"], r_l2["phi_Z"], atol=1e-10)
+        assert np.allclose(r_default.get_phi_Z(), r_l2.get_phi_Z(), atol=1e-10)
 
     def test_log_loss_with_and_without_y(self):
         X, y, model = _binary_classification_dgp(n=120, d=5, seed=6)
@@ -1299,8 +1382,8 @@ class TestArbitraryLossFlow:
         )
         # Without y -> label-free divergence (finite, non-negative in Z-space)
         res_free = e(X[:40])
-        assert np.all(np.isfinite(res_free["phi_X"]))
-        assert res_free["phi_Z"].min() >= -1e-6
+        assert np.all(np.isfinite(res_free.get_phi_X()))
+        assert res_free.get_phi_Z().min() >= -1e-6
         # With y -> DFI loss-difference form (finite)
         res = e(X[:40], y=y[:40])
-        assert np.all(np.isfinite(res["phi_X"]))
+        assert np.all(np.isfinite(res.get_phi_X()))

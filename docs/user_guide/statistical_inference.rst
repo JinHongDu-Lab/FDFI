@@ -33,6 +33,12 @@ intervals.
    The central-limit-theorem approximation works best when ``n >= 30``.  With
    very small test sets the coverage of the reported CIs will be approximate.
 
+For ``OTExplainer`` and ``EOTExplainer`` the standard errors treat the mean
+and covariance estimated from the background as fixed, so the intervals cover
+the importance under that fitted geometry.  The estimation error of the
+covariance is not included and can make the intervals for ``phi_X`` too
+narrow for the importance under the population covariance.
+
 ----
 
 Variance Floor
@@ -94,27 +100,31 @@ Three margin strategies are available:
 One-sided vs. Two-sided Tests
 -------------------------------
 
-The ``alternative`` parameter controls the direction of the test:
+The ``alternative`` parameter sets the interval type and the direction of the
+test.  Importance at or below the margin is practically null, so both
+``'two-sided'`` and ``'greater'`` test ``H0: phi <= margin`` and reject only
+when the interval lies above the margin; a score significantly *below* the
+margin is not significant.
 
 .. list-table::
    :header-rows: 1
    :widths: 15 30 55
 
    * - Value
-     - Hypothesis
+     - Rejects when
      - When to use
    * - ``'two-sided'``
-     - ``phi != margin``
-     - Default.  Detect both positive and negative importance, or features
-       that may suppress the target.
+     - ``ci_lower > margin``
+     - Default.  Reports two-sided intervals; the p-value
+       ``min(1, 2 * P(Z > zscore))`` is 1 for scores below the margin.
    * - ``'greater'``
-     - ``phi > margin``
-     - You are only interested in *positive* contributions.  The CI has an
-       open upper bound (+∞); the plot renders it with a ► caret.
+     - ``ci_lower > margin``
+     - One-sided test at level ``alpha``.  The CI has an open upper bound
+       (+∞); the plot renders it with a ► caret.
    * - ``'less'``
-     - ``phi < margin``
-     - You are only interested in *negative* contributions.  The CI has an
-       open lower bound (−∞); the plot renders it with a ◄ caret.
+     - ``ci_upper < margin``
+     - Tests whether importance is *below* the margin.  The CI has an open
+       lower bound (−∞); the plot renders it with a ◄ caret.
 
 .. code-block:: python
 
@@ -148,9 +158,9 @@ is inflated.  Pass ``multitest_method`` to apply one of the
    import pandas as pd
    pd.DataFrame({
        "feature":    feature_names,
-       "score":      ci["score"].round(4),
-       "pvalue_adj": ci["pvalue_adj"].round(4),
-       "reject":     ci["reject_null"],
+       "score":      ci.get_score().round(4),
+       "pvalue_adj": ci.get_pvalue_adj().round(4),
+       "reject":     ci.get_reject_null(),
    })
 
 Commonly used methods:
@@ -217,7 +227,7 @@ Complete Example
    results = explainer(X[200:])
 
    # Bar chart with error bars
-   summary_bar(results["phi_X"], results["se_X"], feature_names=feature_names)
+   summary_bar(results.get_phi_X(), results.get_se_X(), feature_names=feature_names)
 
    # One-sided confidence intervals (greater) with FDR correction
    ci = explainer.conf_int(
@@ -229,8 +239,7 @@ Complete Example
 
 .. seealso::
 
-   :doc:`interpreting_results` — reference table for all output dictionary
-   keys.
+   :doc:`interpreting_results` — reference table for all result getters.
 
    :doc:`../tutorials/confidence_intervals` — worked tutorial with visual
    comparisons of one-sided and two-sided CIs.

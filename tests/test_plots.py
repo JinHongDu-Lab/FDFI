@@ -4,6 +4,7 @@ import ast
 import json
 import re
 import warnings
+from pathlib import Path
 
 import matplotlib
 
@@ -24,6 +25,25 @@ from fdfi.plots import (
     summary_plot,
     waterfall_plot,
 )
+from fdfi.results import ConfIntResults
+
+
+def _ci(score, ci_lower, ci_upper, alternative="two-sided", **fields):
+    """ConfIntResults with the fields conf_int() always returns."""
+    score = np.asarray(score)
+    data = {
+        "score": score,
+        "se": np.ones_like(score),
+        "ci_lower": ci_lower,
+        "ci_upper": ci_upper,
+        "reject_null": np.zeros(len(score), dtype=bool),
+        "ranking": np.argsort(np.argsort(-score, kind="stable")) + 1,
+        "alternative": alternative,
+        "margin": 0.0,
+        "margin_method": "fixed",
+    }
+    data.update(fields)
+    return ConfIntResults(data)
 
 
 @pytest.fixture
@@ -234,16 +254,16 @@ class TestCorrelationHeatmap:
 class TestInferenceAndDiagnosticsPlots:
     """Tests for confidence interval and diagnostics plots."""
 
-    def test_confidence_interval_plot_accepts_conf_int_style_dict(self):
-        ci = {
-            "score": np.array([0.3, 0.1, 0.2]),
-            "se": np.array([0.02, 0.01, 0.03]),
-            "ci_lower": np.array([0.25, 0.08, 0.12]),
-            "ci_upper": np.array([0.35, 0.12, 0.28]),
-            "reject_null": np.array([True, False, True]),
-            "ranking": np.array([1, 3, 2]),
-            "margin": 0.0,
-        }
+    def test_confidence_interval_plot_limits_rows(self):
+        ci = _ci(
+            score=np.array([0.3, 0.1, 0.2]),
+            se=np.array([0.02, 0.01, 0.03]),
+            ci_lower=np.array([0.25, 0.08, 0.12]),
+            ci_upper=np.array([0.35, 0.12, 0.28]),
+            reject_null=np.array([True, False, True]),
+            ranking=np.array([1, 3, 2]),
+            margin=0.0,
+        )
 
         fig, ax = confidence_interval_plot(
             ci,
@@ -259,13 +279,13 @@ class TestInferenceAndDiagnosticsPlots:
         close(fig)
 
     def test_confidence_interval_plot_uses_group_names(self):
-        ci = {
-            "score": np.array([0.3, 0.1]),
-            "ci_lower": np.array([0.2, -np.inf]),
-            "ci_upper": np.array([np.inf, 0.2]),
-            "reject_null": np.array([True, False]),
-            "groups": ["clinical", "genomic"],
-        }
+        ci = _ci(
+            score=np.array([0.3, 0.1]),
+            ci_lower=np.array([0.2, -np.inf]),
+            ci_upper=np.array([np.inf, 0.2]),
+            reject_null=np.array([True, False]),
+            groups=["clinical", "genomic"],
+        )
 
         fig, ax = confidence_interval_plot(ci, show=False)
 
@@ -276,11 +296,11 @@ class TestInferenceAndDiagnosticsPlots:
         close(fig)
 
     def test_confidence_interval_plot_validates_max_display(self):
-        ci = {
-            "score": np.array([0.3]),
-            "ci_lower": np.array([0.2]),
-            "ci_upper": np.array([0.4]),
-        }
+        ci = _ci(
+            score=np.array([0.3]),
+            ci_lower=np.array([0.2]),
+            ci_upper=np.array([0.4]),
+        )
 
         with pytest.raises(ValueError):
             confidence_interval_plot(ci, max_display=0, show=False)
@@ -316,6 +336,16 @@ class TestInferenceAndDiagnosticsPlots:
 
 class TestTutorialSmoke:
     """Smoke checks for visualization tutorial integration."""
+
+    @pytest.mark.parametrize("path", sorted(Path("docs").rglob("*.ipynb")))
+    def test_notebook_code_cells_have_valid_syntax(self, path):
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        for i, cell in enumerate(notebook["cells"]):
+            if cell["cell_type"] == "code":
+                source = "".join(cell["source"])
+                # IPython magic and shell lines are not Python statements.
+                source = re.sub(r"(?m)^(\s*)[%!]", r"\1#", source)
+                ast.parse(source, filename=f"{path}:cell {i}")
 
     def test_visualization_tutorial_is_valid_json(self):
         with open("docs/tutorials/visualization.ipynb", encoding="utf-8") as handle:
@@ -372,27 +402,27 @@ class TestTutorialSmoke:
 # ---------------------------------------------------------------------------
 
 def _ci_greater():
-    """ci_results dict for alternative='greater' (ci_upper = +inf)."""
-    return {
-        "score":       np.array([0.4, 0.2, 0.05]),
-        "ci_lower":    np.array([0.28, 0.10, -0.02]),
-        "ci_upper":    np.full(3, np.inf),
-        "reject_null": np.array([True, True, False]),
-        "alternative": "greater",
-        "margin":      0.0,
-    }
+    """ConfIntResults for alternative='greater' (ci_upper = +inf)."""
+    return _ci(
+        score=np.array([0.4, 0.2, 0.05]),
+        ci_lower=np.array([0.28, 0.10, -0.02]),
+        ci_upper=np.full(3, np.inf),
+        reject_null=np.array([True, True, False]),
+        alternative="greater",
+        margin=0.0,
+    )
 
 
 def _ci_less():
-    """ci_results dict for alternative='less' (ci_lower = -inf)."""
-    return {
-        "score":       np.array([0.4, 0.2, 0.05]),
-        "ci_lower":    np.full(3, -np.inf),
-        "ci_upper":    np.array([0.52, 0.30, 0.17]),
-        "reject_null": np.array([True, True, False]),
-        "alternative": "less",
-        "margin":      0.0,
-    }
+    """ConfIntResults for alternative='less' (ci_lower = -inf)."""
+    return _ci(
+        score=np.array([0.4, 0.2, 0.05]),
+        ci_lower=np.full(3, -np.inf),
+        ci_upper=np.array([0.52, 0.30, 0.17]),
+        reject_null=np.array([True, True, False]),
+        alternative="less",
+        margin=0.0,
+    )
 
 
 class TestCIPlotOneSided:
@@ -460,14 +490,14 @@ class TestCIPlotOneSided:
     # -- Two-sided regression test ------------------------------------------
 
     def test_ci_two_sided_unchanged(self):
-        ci = {
-            "score":       np.array([0.3, 0.1]),
-            "ci_lower":    np.array([0.2, 0.05]),
-            "ci_upper":    np.array([0.4, 0.15]),
-            "reject_null": np.array([True, False]),
-            "alternative": "two-sided",
-            "margin":      0.0,
-        }
+        ci = _ci(
+            score=np.array([0.3, 0.1]),
+            ci_lower=np.array([0.2, 0.05]),
+            ci_upper=np.array([0.4, 0.15]),
+            reject_null=np.array([True, False]),
+            alternative="two-sided",
+            margin=0.0,
+        )
         fig, ax = confidence_interval_plot(ci, show=False)
         fig.canvas.draw()
         xmin, xmax = ax.get_xlim()
@@ -476,20 +506,6 @@ class TestCIPlotOneSided:
         import matplotlib.lines as mlines
         markers = [line.get_marker() for line in ax.lines]
         assert all(m not in (mlines.CARETLEFTBASE, mlines.CARETRIGHTBASE) for m in markers)
-        close(fig)
-
-    # -- Backward-compatibility test ----------------------------------------
-
-    def test_ci_missing_alternative_defaults_to_two_sided(self):
-        ci = {
-            "score":    np.array([0.3, 0.1]),
-            "ci_lower": np.array([0.2, 0.05]),
-            "ci_upper": np.array([0.4, 0.15]),
-        }
-        fig, ax = confidence_interval_plot(ci, show=False)
-        fig.canvas.draw()
-        xmin, xmax = ax.get_xlim()
-        assert np.isfinite(xmin) and np.isfinite(xmax)
         close(fig)
 
     # -- Annotation tests ---------------------------------------------------
@@ -546,12 +562,12 @@ class TestCIPlotOneSided:
     # -- Validation tests ---------------------------------------------------
 
     def test_ci_unknown_alternative_raises(self):
-        ci = {
-            "score":       np.array([0.3]),
-            "ci_lower":    np.array([0.2]),
-            "ci_upper":    np.array([0.4]),
-            "alternative": "bad-value",
-        }
+        ci = _ci(
+            score=np.array([0.3]),
+            ci_lower=np.array([0.2]),
+            ci_upper=np.array([0.4]),
+            alternative="bad-value",
+        )
         with pytest.raises(ValueError, match="alternative"):
             confidence_interval_plot(ci, show=False)
 

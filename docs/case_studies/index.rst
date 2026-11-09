@@ -37,8 +37,9 @@ place.
 .. note::
 
    Both notebooks ship with their outputs stored and are rendered without being
-   re-executed, so they can be read as-is. Re-running Case Study 1 takes a few
-   minutes; Case Study 2 downloads the CTG spreadsheet from the UCI repository
+   re-executed, so they can be read as-is. Re-running Case Study 1 takes about
+   30 minutes (832 features, each counterfactual averaged over ``n_eta=10``
+   coupling draws); Case Study 2 downloads the CTG spreadsheet from the UCI repository
    (network access plus the ``xlrd`` package) and trains several normalizing
    flows, so it takes considerably longer.
 
