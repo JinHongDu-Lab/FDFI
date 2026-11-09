@@ -117,19 +117,10 @@ python case_studies.py
 All numerical results are printed to the console. The figures are saved in
 `case_study/figures/`.
 
-The case studies were run on a laptop with an Intel Core i7-14650HX CPU under
-Windows, with Python 3.10.19, NumPy 2.2.6, pandas 2.3.3 and scikit-learn 1.7.2.
-The random forests use all CPU cores. Case study 2 uses one thread for BLAS,
-OpenMP and PyTorch. The approximate running times are as follows.
-
-| Part | Approximate time |
-|---|---|
-| Case study 1 (HIV sens50, 611 × 832, `EOTExplainer`) | about 50 minutes |
-| Case study 2 (CTG, 2,126 × 21, `FlowExplainer`) | about 12 minutes |
-| Total | about 1 hour |
-
-The script reproduces the full manuscript results; it has no shorter
-demonstration mode.
+The case studies were run on a laptop with an Intel Core i7-14650HX CPU.
+Case study 1 (HIV sens50) took about 50 minutes,
+and Case study 2 (CTG) took about 12 minutes,
+for a total of about 1 hour.
 
 The script downloads `CTG.xls` from the UCI repository and thus needs an
 internet connection. If the download fails, set `CTG_URL` in
@@ -159,41 +150,14 @@ The commands work as follows.
 - `python run_benchmark.py --rerun` runs both studies.
 
 **Approximate running times.** The simulations were run on a server with dual
-Intel Xeon Platinum 8580 CPUs (240 logical cores), 1 TB of RAM and an NVIDIA RTX PRO 6000 Blackwell Workstation Edition GPU (see Appendix B.3).
-The flow-matching step of FDFI was run on the GPU, and the other methods were run on the CPUs.
+Intel Xeon Platinum 8580 CPUs (240 logical cores), 1 TB of RAM, and an NVIDIA
+RTX PRO 6000 Blackwell Workstation Edition GPU. FDFI flow matching used the GPU,
+while the other methods used the CPUs. The running times are roughly estimated
+as follows:
 
 | Command | Reproduces | Approximate time |
 |---|---|---|
-| `python run_benchmark.py` | Figures 1, 2 and 8 from the saved results | a few seconds |
-| `python run_benchmark.py --rerun benchmark` | Figures 1 and 8 (50 seeds) | less than 40 hours |
-| `python run_benchmark.py --rerun runtime` | Figure 2 (16 repetitions) | about 50 hours |
-| `python run_benchmark.py --rerun` | Figures 1, 2 and 8 | about 90 hours |
-
-*Benchmark (50 seeds).* Each scenario runs LOCO and CPI once, and DFI-OT,
-DFI-EOT and FDFI with both CPI and SCPI resampling. The scenario n = 1000,
-ρ = 0.8 is shared by the two sweeps and is computed once. The recorded time of
-each method includes the shared random-forest fit, so the times below are upper
-bounds.
-
-| Scenario | Approximate time |
-|---|---|
-| n = 200, ρ = 0.8 | 2.1 h |
-| n = 400, ρ = 0.8 | 3.5 h |
-| n = 600, ρ = 0.8 | 5.0 h |
-| n = 800, ρ = 0.8 | 6.0 h |
-| n = 1000, ρ = 0.8 | 7.6 h |
-| n = 1000, ρ = 0.4 | 7.5 h |
-| n = 1000, ρ = 0.6 | 7.3 h |
-| Total | less than 40 h |
-
-*Runtime study (16 repetitions).* The times include method evaluation only.
-SHAP is evaluated on 10 features, and the other methods on 50 features.
-
-| n | LOCO | CPI | nLOCO | dLOCO | DFI-OT | DFI-EOT | FDFI | SHAP | Total |
-|---|---|---|---|---|---|---|---|---|---|
-| 200 | 0.44 h | 0.39 h | 0.91 h | 0.53 h | 0.03 h | 0.03 h | 0.12 h | 6.42 h | 8.9 h |
-| 400 | 0.45 h | 0.48 h | 0.94 h | 0.73 h | 0.06 h | 0.05 h | 0.21 h | 6.60 h | 9.5 h |
-| 600 | 0.42 h | 0.57 h | 0.87 h | 1.03 h | 0.09 h | 0.09 h | 0.27 h | 6.44 h | 9.8 h |
-| 800 | 0.42 h | 0.67 h | 0.91 h | 1.40 h | 0.12 h | 0.12 h | 0.34 h | 6.70 h | 10.7 h |
-| 1000 | 0.43 h | 0.74 h | 0.88 h | 1.73 h | 0.16 h | 0.16 h | 0.43 h | 7.04 h | 11.6 h |
-| Total | | | | | | | | | about 50 h |
+| `python run_benchmark.py` | Figures 1, 2, and 8 from saved results | A few seconds |
+| `python run_benchmark.py --rerun benchmark` | Figures 1 and 8 | About 40 hours |
+| `python run_benchmark.py --rerun runtime` | Figure 2 | About 50 hours |
+| `python run_benchmark.py --rerun` | Figures 1, 2, and 8 | About 90 hours |
