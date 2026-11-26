@@ -113,6 +113,9 @@ Both result classes also provide `to_frame()` for a pandas table.
 
 ## 3. Replication
 
+Rerun results may differ slightly from the reported ones in numerical values
+because of differences in hardware.
+
 ### 3.1 Case studies (Sections 4 and 5)
 
 The script reads data with relative paths. Therefore, it must be run from
