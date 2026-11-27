@@ -228,4 +228,4 @@ python rerun_parallel.py merge      # update results/ and draw Figures 1, 2 and 
 
 On the server described above, with 50 workers of 4 threads, the benchmark took
 about 3.5 hours for DFI-OT, DFI-EOT and FDFI and about 45 minutes for LOCO and
-CPI. The runtime step took RUNTIME_TBD.
+CPI. The runtime step took about 3 hours.
