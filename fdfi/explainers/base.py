@@ -132,7 +132,8 @@ class Explainer:
         ``L = cov^{1/2}`` and ``L_inv``, with the eigenvalues of ``cov`` clipped
         below at ``regularize``."""
         self.mean = np.mean(data, axis=0, keepdims=True)
-        cov = np.cov(data, rowvar=False, ddof=0)
+        # atleast_2d: np.cov returns a 0-d array when d = 1.
+        cov = np.atleast_2d(np.cov(data, rowvar=False, ddof=0))
         self.cov = (cov + cov.T) / 2
         eigenvals, eigenvecs = np.linalg.eigh(self.cov)
         eigenvals = np.maximum(eigenvals, self.regularize)
@@ -172,14 +173,20 @@ class Explainer:
         """Importance, standard deviation and standard error of per-sample
         UEIFs in X- and Z-space."""
         n = ueifs_X.shape[0]
-        ddof = 1 if n > 1 else 0
+
+        def se(ueifs):
+            # A standard error needs at least two observations.
+            if n < 2:
+                return np.full(ueifs.shape[1], np.nan)
+            return np.std(ueifs, axis=0, ddof=1) / np.sqrt(n)
+
         return {
             "phi_X": np.mean(ueifs_X, axis=0),
             "std_X": np.std(ueifs_X, axis=0),
-            "se_X": np.std(ueifs_X, axis=0, ddof=ddof) / np.sqrt(n),
+            "se_X": se(ueifs_X),
             "phi_Z": np.mean(ueifs_Z, axis=0),
             "std_Z": np.std(ueifs_Z, axis=0),
-            "se_Z": np.std(ueifs_Z, axis=0, ddof=ddof) / np.sqrt(n),
+            "se_Z": se(ueifs_Z),
         }
 
     def _explain(self, X: np.ndarray, y: Optional[np.ndarray]) -> ExplanationResults:
@@ -387,7 +394,9 @@ class Explainer:
             return se_raw
 
         if var_floor_method == "mixture":
-            self._var_floor_mixture = TwoComponentMixture().fit(se_raw)
+            self._var_floor_mixture = TwoComponentMixture().fit(
+                se_raw[np.isfinite(se_raw)]
+            )
             floor = self._var_floor_mixture.quantile(var_floor_quantile, "smaller")
             self._var_floor_value = floor
         else:
@@ -497,6 +506,13 @@ class Explainer:
                 )
 
             n = ueifs.shape[0]
+            if n < 2:
+                raise ValueError(
+                    "conf_int() needs at least two explained observations."
+                )
+            # Crossfitting scales its standard errors by sqrt(n (K-1)/K);
+            # group standard errors use the same scale as feature ones.
+            root_n = getattr(self, "_group_root_n", None) or np.sqrt(n)
             d = ueifs.shape[1]
             group_dict = self._normalize_groups(groups, d)
 
@@ -513,7 +529,7 @@ class Explainer:
 
                 phi_hat_list.append(grouped_ueifs.mean())
                 # Standard error of the mean
-                se_raw_list.append(grouped_ueifs.std(ddof=1) / np.sqrt(n))
+                se_raw_list.append(grouped_ueifs.std(ddof=1) / root_n)
                 group_names.append(name)
 
             phi_hat = np.array(phi_hat_list)
@@ -522,6 +538,10 @@ class Explainer:
         else:
             if self._last_results is None:
                 raise ValueError("Run the explainer first to compute scores.")
+            if (getattr(self, "_last_n", None) or 0) < 2:
+                raise ValueError(
+                    "conf_int() needs at least two explained observations."
+                )
 
             if target == "Z":
                 phi_hat = self._last_results["phi_Z"]
@@ -661,7 +681,9 @@ class Explainer:
             self._margin_mixture = None
             return margin, "gap"
         elif method == "mixture":
-            self._margin_mixture = TwoComponentMixture().fit(phi_hat)
+            self._margin_mixture = TwoComponentMixture().fit(
+                phi_hat[np.isfinite(phi_hat)]
+            )
             margin = max(
                 self._margin_mixture.quantile(margin_quantile, "smaller"), 0
             )
@@ -689,7 +711,8 @@ class Explainer:
         least zero, as for the mixture rule (null scores estimate zero and can
         be negative).
         """
-        vals = np.sort(phi_hat)
+        # NaN scores (e.g. a constant feature) cannot be ranked; ignore them.
+        vals = np.sort(np.asarray(phi_hat, dtype=float)[np.isfinite(phi_hat)])
         if len(vals) < 2:
             return 0.0
         # Work in log-space above a floor.  A negative score is pure noise, so

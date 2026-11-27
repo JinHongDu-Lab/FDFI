@@ -14,10 +14,17 @@ class Crossfitting(Explainer):
     Cross-fitted DFI explainer for valid inference at small sample sizes.
 
     Wraps any Explainer subclass and performs cross-fitting using a
-    scikit-learn cross-validation splitter.  The disentanglement map is
-    fitted on the training portion of each split and importance is
-    evaluated on the held-out portion.  Final estimates are the
-    ensemble average of cross-fitted predictors.
+    scikit-learn cross-validation splitter.  A scikit-learn estimator passed
+    as ``model`` is refitted on the training portion of each split, the
+    latent resampling pool is restricted to that portion, and importance is
+    evaluated on the held-out portion.  The disentanglement map itself (the
+    OT/EOT whitening or the trained flow) is fitted on the full ``data`` in
+    every split, so this is a partial out-of-fold wrapper rather than full
+    nuisance cross-fitting.  A callable ``model`` is not refitted.
+
+    Group inference with ``conf_int(groups=...)`` is available after the
+    cross-fitted run (``explainer()``), not after scoring new data
+    (``explainer(X_new)``).
 
     Parameters
     ----------
@@ -286,6 +293,8 @@ class Crossfitting(Explainer):
             "se_Z": ueifs_Z_thresh.std(axis=0, ddof=ddof) / sqn_eff,
         }
         self._cache_results(results, n_eff)
+        # conf_int(groups=...) uses the same sqrt(n (K-1)/K) scale.
+        self._group_root_n = sqn_eff
         return ExplanationResults(
             results, explainer_name=type(self).__name__, n=n_eff
         )
@@ -339,6 +348,11 @@ class Crossfitting(Explainer):
             "se_Z": se_Z,
         }
         self._cache_results(results, n)
+        # The stored per-sample UEIFs belong to the cross-fitted run, not to
+        # X; drop them so conf_int(groups=...) cannot mix the two.
+        self.ueifs_X = None
+        self.ueifs_Z = None
+        self._group_root_n = None
         return ExplanationResults(
             results, explainer_name=type(self).__name__, n=n
         )

@@ -21,6 +21,22 @@ def _require_pandas():
     return pd
 
 
+def _frozen_copy(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy array fields and make them read-only.
+
+    The explainer keeps its own arrays for later ``conf_int()`` calls, so the
+    result object must not share them: an in-place change by the user would
+    otherwise alter every later inference.
+    """
+    out = {}
+    for key, value in data.items():
+        if isinstance(value, np.ndarray):
+            value = value.copy()
+            value.setflags(write=False)
+        out[key] = value
+    return out
+
+
 class _ResultBase:
     """Result container with a readable printed form."""
 
@@ -51,8 +67,10 @@ class ExplanationResults(_ResultBase):
     ``get_phi_X()``, ``get_se_X()`` and ``get_std_X()`` in X-space, or the
     corresponding ``*_Z()`` methods in latent space. For FlowExplainer with
     ``method='both'``, ``get_*_scpi()`` returns the additional SCPI fields.
-    Getters return the stored arrays without copying or recomputing them;
-    a getter for an unavailable field raises ``KeyError``.
+    The arrays are copied from the explainer when the object is created and
+    are read-only, so changing them cannot affect later inference; use
+    ``np.array(results.get_phi_X())`` for a writable copy. A getter for an
+    unavailable field raises ``KeyError``.
     """
 
     def __init__(
@@ -61,7 +79,7 @@ class ExplanationResults(_ResultBase):
         explainer_name: str = "",
         n: Optional[int] = None,
     ):
-        self._data = dict(data)
+        self._data = _frozen_copy(data)
         self.explainer_name = explainer_name
         self.n = n
 
@@ -198,8 +216,8 @@ class ConfIntResults(_ResultBase):
     ``(lower, upper)`` arrays. Arrays have one entry per feature, or per group
     when ``groups`` was given. ``get_groups()``, ``get_pvalue_adj()`` and
     ``get_multitest_method()`` return ``None`` when not applicable. Other
-    getters raise ``KeyError`` for unavailable fields. Stored values are
-    returned without copying or recomputing them.
+    getters raise ``KeyError`` for unavailable fields. The arrays are copied
+    when the object is created and are read-only.
     """
 
     def __init__(
@@ -208,7 +226,7 @@ class ConfIntResults(_ResultBase):
         alpha: Optional[float] = None,
         target: Optional[str] = None,
     ):
-        self._data = dict(data)
+        self._data = _frozen_copy(data)
         self.alpha = alpha
         self.target = target
 

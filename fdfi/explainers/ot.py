@@ -129,7 +129,9 @@ class OTExplainer(Explainer):
         self.regularize = kwargs.get("regularize", 1e-6)
         self.sampling_method = sampling_method
         self._set_random_state(random_state)
-        self.method = method
+        self.method = str(method).lower()
+        if self.method not in ("cpi", "scpi"):
+            raise ValueError(f"method must be 'cpi' or 'scpi', got {method!r}")
 
         self._whiten(data)
         self._set_pool(data)

@@ -50,6 +50,25 @@
 - The FAQ described Gower-distance options for ``EOTExplainer`` that do not
   exist, and the user guide and API page listed nonexistent ``target``,
   ``stochastic_transport`` and ``cost_metric`` options.
+- **Result objects shared arrays with the explainer**: changing an array
+  returned by a getter in place changed every later ``conf_int()``. The
+  result objects now hold read-only copies.
+- **Cross-fitted group standard errors** used ``sqrt(n)`` while feature-level
+  ones used ``sqrt(n (K-1)/K)``, so group intervals were narrower. Both now use
+  the cross-fitting scale.
+- ``Crossfitting(...)(X_new)`` left the per-sample scores of the cross-fitted
+  run in place, so ``conf_int(groups=...)`` silently described the original
+  data. Group inference now raises an error after scoring new data.
+- ``OTExplainer`` and ``EOTExplainer`` failed for a single feature, and a
+  single explained observation gave a zero standard error and significant
+  features; it now gives ``NaN`` standard errors and ``conf_int()`` raises.
+- NaN scores no longer break the ``'gap'`` and ``'mixture'`` margins.
+- ``OTExplainer`` validates ``method`` at construction, ``FlowExplainer``
+  validates ``jacobian_mode`` (a misspelling silently used ``'average'``), and
+  ``confidence_interval_plot`` raises a ``TypeError`` for a plain ``dict``.
+- The ``Crossfitting`` docstring said the disentangling map is fitted on each
+  training fold; it is fitted on the full data, and only the predictor and the
+  resampling pool are fold-specific.
 
 ### Added
 - ``EOTExplainer(n_eta=10)``: coupling draws for the CPI baseline.  For the
@@ -72,9 +91,12 @@
 - ``EOTExplainer(method='scpi')`` uses one joint draw of the latent coordinate
   and coupling noise per counterfactual replicate, and evaluates the baseline
   on the same coupling draws, so their noise cancels up to an
-  ``O(1/nsamples)`` bias.
+  ``O(1/nsamples)`` bias, which can be large for models that are nonlinear in
+  the coupling noise.
 
 ## [0.2.0]
+Not released separately; these changes are part of 0.2.1.
+
 ### Changed
 - **Result objects.** Calling an explainer now returns an `ExplanationResults`
   object and `conf_int()` returns a `ConfIntResults` object instead of a plain

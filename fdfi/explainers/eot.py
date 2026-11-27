@@ -63,9 +63,11 @@ class EOTExplainer(Explainer):
     - ``'scpi'``: the loss at the averaged counterfactual prediction minus the
       baseline loss.  Each replicate uses one joint draw of ``Z_j`` and the
       coupling noise, and the baseline averages the model over the same
-      coupling draws without replacing ``Z_j``, so their noise cancels in the
-      score up to an ``O(1/nsamples)`` bias.  A feature costs ``nsamples``
-      model evaluations per point.
+      coupling draws without replacing ``Z_j``.  The noise cancels exactly for
+      a model that does not use ``Z_j`` and is linear in the noise otherwise;
+      for a nonlinear model the remaining bias is ``O(1/nsamples)`` but its
+      constant can be large, so ``'cpi'`` is preferred.  A feature costs
+      ``nsamples`` model evaluations per point.
 
     Each coupling draw's noise
     is shared across features, which leaves every feature's score and the
@@ -250,7 +252,8 @@ class EOTExplainer(Explainer):
           ``n_eta`` draws for other losses, matching the baseline.
         - ``'scpi'``: each replicate uses one coupling draw, and the baseline
           averages the model over the same draws without replacing ``Z_j``,
-          so their Monte Carlo noise cancels in the score.
+          so their Monte Carlo noise cancels in the score up to an
+          ``O(1/nsamples)`` bias that can be large for nonlinear models.
 
         Parameters
         ----------

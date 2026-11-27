@@ -145,6 +145,12 @@ class FlowExplainer(Explainer):
         self.method = method.lower()
         self.verbose = verbose
         self.kwargs = kwargs
+        jacobian_mode = kwargs.get("jacobian_mode", "average")
+        if jacobian_mode not in ("per_sample", "avg_sq", "average"):
+            raise ValueError(
+                "jacobian_mode must be 'per_sample', 'avg_sq' or 'average', "
+                f"got {jacobian_mode!r}"
+            )
         self.flow_solver_method = kwargs.get("flow_solver_method", "dopri5")
         self.flow_solver_rtol = kwargs.get("flow_solver_rtol", 1e-3)
         self.flow_solver_atol = kwargs.get("flow_solver_atol", 1e-5)

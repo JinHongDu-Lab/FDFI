@@ -1030,6 +1030,11 @@ def confidence_interval_plot(
     >>> ci_one = explainer.conf_int(alpha=0.05, alternative="greater")
     >>> confidence_interval_plot(ci_one, feature_names=feature_names, show=False)
     """
+    if not isinstance(ci_results, ConfIntResults):
+        raise TypeError(
+            "confidence_interval_plot() takes the ConfIntResults object "
+            f"returned by explainer.conf_int(), not {type(ci_results).__name__}."
+        )
     score = _as_1d(ci_results.get_score(), "ci_results.get_score()")
     lower, upper = ci_results.get_ci()
     if max_display <= 0:

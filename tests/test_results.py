@@ -231,19 +231,23 @@ class TestResultEdgeCases:
         explainer, results = fitted_ot
         assert type(explainer._last_results) is dict
         for key, value in explainer._last_results.items():
-            assert getattr(results, f"get_{key}")() is value
+            got = getattr(results, f"get_{key}")()
+            np.testing.assert_array_equal(got, value)
+            assert got is not value and not got.flags.writeable
             with pytest.raises(AttributeError):
                 getattr(results, key)
         assert "get_phi_X" in dir(results)
         assert "phi_X" not in dir(results)
 
-    def test_constructor_copies_mapping_without_copying_arrays(self):
+    def test_constructor_copies_mapping_and_arrays(self):
         values = np.array([1.0, 2.0])
         for cls, field in ((ExplanationResults, "phi_X"), (ConfIntResults, "score")):
             data = {field: values}
             result = cls(data)
             data.clear()
-            assert getattr(result, f"get_{field}")() is values
+            got = getattr(result, f"get_{field}")()
+            np.testing.assert_array_equal(got, values)
+            assert got is not values and not got.flags.writeable
             with pytest.raises(AttributeError):
                 result.keys()
             with pytest.raises(TypeError):
@@ -308,7 +312,7 @@ class TestResultEdgeCases:
         assert "Flow model: fitted" in repr(explainer)
         assert "get_phi_X_scpi()" in repr(results)
         for field, value in explainer._last_results.items():
-            assert getattr(results, f"get_{field}")() is value
+            np.testing.assert_array_equal(getattr(results, f"get_{field}")(), value)
         unfitted = FlowExplainer(_model, explainer.data, fit_flow=False)
         assert "not fitted (call fit_flow())" in repr(unfitted)
         assert repr(FlowExplainer.__new__(FlowExplainer)).startswith("FlowExplainer")

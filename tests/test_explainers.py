@@ -1292,9 +1292,8 @@ class TestArbitraryLossOT:
 
     def test_invalid_method_raises(self):
         X, y, model = _linear_regression_dgp()
-        e = OTExplainer(model, X, nsamples=10, random_state=0, method="bogus")
         with pytest.raises(ValueError, match="method must be"):
-            e(X[:20], y=y[:20])
+            OTExplainer(model, X, nsamples=10, random_state=0, method="bogus")
 
     def test_custom_callable_loss(self):
         X, y, model = _linear_regression_dgp(seed=3)
