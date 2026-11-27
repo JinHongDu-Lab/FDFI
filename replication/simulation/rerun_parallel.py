@@ -1,18 +1,22 @@
-"""Regenerate only the DFI-OT, DFI-EOT and FDFI rows of the simulation study.
+"""Rerun the simulation study in parallel, by method group.
 
-The LOCO, CPI, nLOCO, dLOCO and SHAP baselines do not call fdfi, so their
-saved rows in ``results/`` do not depend on the fdfi version. This script
-reruns the three fdfi methods with the same design, seeds and inference as
-``run_benchmark.py --rerun`` and merges them with the saved baseline rows.
-It was used to update Figures 1, 2 and 8 to fdfi 0.2.1.
+This script runs the same design, seeds and inference as
+``run_benchmark.py --rerun``, but splits the 50 seeds over worker processes.
+It was used to update Figures 1, 2 and 8 to fdfi 0.2.1:
 
-    python rerun_fdfi_rows.py benchmark --workers 50 --threads 4
-    python rerun_fdfi_rows.py runtime
-    python rerun_fdfi_rows.py merge          # write results/ and the figures
+    python rerun_parallel.py benchmark --workers 50 --threads 4
+    python rerun_parallel.py benchmark --baselines --workers 50 --threads 4
+    python rerun_parallel.py runtime
+    python rerun_parallel.py merge          # write results/ and the figures
 
-The benchmark runs seeds in parallel worker processes (one GPU is shared for
-flow training). The runtime study runs sequentially and should be run on an
-otherwise idle machine, because it records wall-clock times.
+``benchmark`` runs DFI-OT, DFI-EOT and FDFI; ``--baselines`` runs LOCO and
+CPI. ``runtime`` times OT, EOT and FDFI only; the nLOCO, dLOCO and SHAP
+timings do not call fdfi and are kept from ``results/runtime_results.csv``.
+``merge`` replaces the rows of every group that was rerun.
+
+Worker processes share one GPU for flow training. The runtime study runs
+sequentially and should be run on an otherwise idle machine, because it
+records wall-clock times.
 """
 import argparse
 import os
@@ -20,7 +24,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-WORK = HERE / "rerun" / "fdfi_rows"
+WORK = HERE / "rerun" / "parallel"
 FDFI_RUNTIME_METHODS = ("OT", "EOT", "FDFI")
 
 
@@ -29,8 +33,8 @@ def _limit_threads(threads):
         os.environ[var] = str(threads)
 
 
-def _benchmark_shard(shard, seeds, threads):
-    """Run the fdfi methods for one subset of the 50-seed schedule."""
+def _benchmark_shard(shard, seeds, threads, baselines):
+    """Run one method group for one subset of the 50-seed schedule."""
     _limit_threads(threads)
     sys.path.insert(0, str(HERE))
     import torch
@@ -38,7 +42,10 @@ def _benchmark_shard(shard, seeds, threads):
     from sklearn.ensemble import RandomForestRegressor
 
     torch.set_num_threads(threads)
-    simulation.BASELINE_METHODS = ()
+    if baselines:
+        simulation.FDFI_FAMILIES = ()
+    else:
+        simulation.BASELINE_METHODS = ()
     simulation.run_runtime_experiment = lambda *a, **k: []
 
     def make_predictor(seed, n_estimators):
@@ -57,13 +64,14 @@ def _benchmark_shard(shard, seeds, threads):
         return cfg
 
     simulation.settings = shard_settings
-    out = WORK / "benchmark" / f"shard_{shard:02d}"
+    group = "baselines" if baselines else "benchmark"
+    out = WORK / group / f"shard_{shard:02d}"
     out.mkdir(parents=True, exist_ok=True)
     simulation.run_experiment("fifty_seed", out, out, out)
     return shard
 
 
-def run_benchmark(workers, threads, n_seeds):
+def run_benchmark(workers, threads, n_seeds, baselines):
     from concurrent.futures import ProcessPoolExecutor
     import multiprocessing as mp
 
@@ -72,7 +80,8 @@ def run_benchmark(workers, threads, n_seeds):
     ctx = mp.get_context("spawn")
     with ProcessPoolExecutor(len(shards), mp_context=ctx) as pool:
         futures = [
-            pool.submit(_benchmark_shard, i, s, threads) for i, s in enumerate(shards)
+            pool.submit(_benchmark_shard, i, s, threads, baselines)
+            for i, s in enumerate(shards)
         ]
         for future in futures:
             print(f"shard {future.result()} done", flush=True)
@@ -99,10 +108,10 @@ def merge():
     from run_benchmark import plot
 
     results = HERE / "results"
-    fdfi = {"DFI-OT", "DFI-EOT", "FDFI"}
 
     pattern = "shard_*/simulation_feature_results.csv"
     shard_files = sorted((WORK / "benchmark").glob(pattern))
+    shard_files += sorted((WORK / "baselines").glob(pattern))
     if shard_files:
         features = pd.concat([pd.read_csv(f) for f in shard_files], ignore_index=True)
         failed = features[features["status"] != "SUCCESS"]
@@ -112,18 +121,19 @@ def merge():
         schedule = simulation.settings("fifty_seed")["seed_schedule"]
         index = {seed: i for i, seed in enumerate(schedule)}
         features["repetition"] = features["seed"].map(index)
-        features.to_csv(WORK / "fdfi_feature_results.csv", index=False)
+        features.to_csv(WORK / "feature_results.csv", index=False)
         summary = simulation.summarize(features, 2000)
+        rerun = set(summary["method"])
         for version in ("cpi", "scpi"):
             path = results / f"simulation_benchmark_{version}.csv"
             saved = pd.read_csv(path)
-            new = summary[summary["resampling_version"] == version]
+            keep = summary["resampling_version"].isin(["baseline", version])
             merged = pd.concat(
-                [saved[~saved["method"].isin(fdfi)], new[saved.columns]],
+                [saved[~saved["method"].isin(rerun)], summary[keep][saved.columns]],
                 ignore_index=True,
             )
             merged.to_csv(path, index=False)
-            print(f"wrote {path}")
+            print(f"wrote {path} (rerun: {', '.join(sorted(rerun))})")
 
     runtime_file = WORK / "runtime" / "simulation_runtime_results.csv"
     if runtime_file.exists():
@@ -151,11 +161,13 @@ def main():
     parser.add_argument("step", choices=("benchmark", "runtime", "merge"))
     parser.add_argument("--workers", type=int, default=50)
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--baselines", action="store_true",
+                        help="benchmark LOCO and CPI instead of the fdfi methods")
     parser.add_argument("--seeds", type=int, default=None,
                         help="number of seeds (default: 50 benchmark, 16 runtime)")
     args = parser.parse_args()
     if args.step == "benchmark":
-        run_benchmark(args.workers, args.threads, args.seeds or 50)
+        run_benchmark(args.workers, args.threads, args.seeds or 50, args.baselines)
     elif args.step == "runtime":
         run_runtime(args.seeds)
     else:

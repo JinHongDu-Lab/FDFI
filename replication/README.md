@@ -7,9 +7,10 @@ computational results in the manuscript.
 ## 1. Folder structure
 
 ```
-fdfi-replication/
+replication/
 ├── README.md
 ├── requirements.txt
+├── requirements-lock.txt
 ├── environment.yml
 ├── fdfi-0.2.1.tar.gz
 ├── case_study/
@@ -32,6 +33,7 @@ fdfi-replication/
 │       └── fig7_ctg_per_sample_summary.pdf
 └── simulation/
     ├── run_benchmark.py
+    ├── rerun_parallel.py
     ├── simulation.py
     ├── simulation_plot.py
     ├── results/
@@ -52,6 +54,9 @@ fdfi-replication/
   scripts. The result accessors do not change the numerical calculations.
 - `requirements.txt`: the Python packages and versions used for the reported
   results.
+- `requirements-lock.txt`: the complete list of installed packages, including
+  indirect dependencies, from the Linux environment used for the reruns
+  (`pip freeze`; the `torch` wheel is the CUDA build).
 - `environment.yml`: the same environment for conda.
 
 **`case_study/`**
@@ -59,9 +64,13 @@ fdfi-replication/
 - `case_studies.py`: replication script for both case studies. Case study 1
   (Section 4) applies the EOT explainer to the HIV sens50 data. Case study 2
   (Section 5) applies the Flow explainer to the CTG data.
-- `data/sens50_processed_dataset.csv`, `data/feature_group.csv`: data for Case study 1.
-- `data/CTG.xls`: data for Case study 2, the Cardiotocography data from the
-  UCI Machine Learning Repository.
+- `data/sens50_processed_dataset.csv`, `data/feature_group.csv`: data for Case
+  study 1, the HIV-1 sens50 neutralization data of Magaret et al. (2019, PLoS
+  Computational Biology 15(4), e1006952), as processed by Du, Roeder, and
+  Wasserman (2025, arXiv:2507.00260), with the biological feature groups.
+- `data/CTG.xls`: data for Case study 2, the Cardiotocography data of Campos and
+  Bernardes (2000) from the UCI Machine Learning Repository
+  (doi:10.24432/C51S4N), licensed under CC BY 4.0.
 - `outputs/`: tables written by `case_studies.py`: per-feature scores and
   group results for Case study 1, and feature and group results for Case
   study 2.
@@ -73,13 +82,20 @@ fdfi-replication/
 
 - `run_benchmark.py`: main script. It draws Figures 1, 2 and 8 from the saved
   results, or reruns the simulations.
+- `rerun_parallel.py`: reruns the simulations with the same design, seeds and
+  inference as `run_benchmark.py --rerun`, but spreads the seeds over parallel
+  worker processes (Section 3.3).
 - `simulation.py`: data-generating processes, competing methods and
   performance measures.
 - `simulation_plot.py`: plotting functions.
 - `results/simulation_benchmark_cpi.csv`, `results/simulation_benchmark_scpi.csv`:
-  benchmark summaries over 50 seeds (Figures 1 and 8).
+  benchmark summaries over 50 seeds (Figures 1 and 8), computed with fdfi 0.2.1
+  by `rerun_parallel.py`.
 - `results/runtime_results.csv`, `results/runtime_summary.csv`: evaluation
-  times over 16 repetitions (Figure 2).
+  times over 16 repetitions (Figure 2). The OT, EOT and FDFI times were
+  measured with fdfi 0.2.1 on the same server as the other methods; the times
+  of LOCO, CPI, nLOCO, dLOCO and SHAP, which do not call fdfi, are from the
+  earlier run.
 - `figures/`: Figures 1, 2 and 8 as reported in the manuscript.
 
 ## 2. Installation
@@ -105,6 +121,9 @@ conda activate fdfi-replication
 
 Both files pin the same package versions. The path `./fdfi-0.2.1.tar.gz` in
 `requirements.txt` is relative, so the command must be run in this folder.
+Installing the bundled source archive needs internet access to download its
+build tool (setuptools). To reproduce the Linux environment exactly, install
+`requirements-lock.txt` instead of `requirements.txt`.
 
 Read explainer output with methods such as `results.get_phi_X()` and
 `results.get_se_X()`. For inference, use `ci.get_score()`, `ci.get_ci()`
@@ -118,13 +137,16 @@ because of differences in hardware.
 
 ### 3.1 Case studies (Sections 4 and 5)
 
-The script reads data with relative paths. Therefore, it must be run from
-`case_study/`:
+The script locates its data and output folders relative to itself, so it can
+be run from any folder:
 
 ```bash
-cd case_study
-python case_studies.py
+python case_study/case_studies.py
 ```
+
+The flow in Case study 2 is trained on the CPU, as for the reported results,
+even when a GPU is available; training on a GPU gives slightly different
+values. To use a GPU, set `CUDA_VISIBLE_DEVICES` before running the script.
 
 All numerical results are printed to the console. The figures are saved in
 `case_study/figures/` and the tables in `case_study/outputs/`.
@@ -161,7 +183,9 @@ The commands work as follows.
 - `python run_benchmark.py --rerun` runs both studies.
 - `--seeds N` reruns with the first `N` seeds instead of 50 (benchmark) or 16
   (runtime), for example `python run_benchmark.py --rerun --seeds 1` to check
-  the setup. Rerun results and figures are written to `rerun/`.
+  the setup. Rerun results and figures are written to `rerun/`; checkpoints
+  are kept per seed count, so a check run does not interfere with a full run.
+- Without a GPU, the flow of FDFI is trained on the CPU, which is much slower.
 
 **Approximate running times.** The simulations were run on a server with dual
 Intel Xeon Platinum 8580 CPUs (240 logical cores), 1 TB of RAM, and an NVIDIA
@@ -175,3 +199,33 @@ as follows:
 | `python run_benchmark.py --rerun benchmark` | Figures 1 and 8 | About 40 hours |
 | `python run_benchmark.py --rerun runtime` | Figure 2 | About 50 hours |
 | `python run_benchmark.py --rerun` | Figures 1, 2, and 8 | About 90 hours |
+
+### 3.3 Parallel rerun of the simulations
+
+`run_benchmark.py --rerun` runs the seeds one after another. On a machine with
+many cores, `rerun_parallel.py` gives the same results in a few hours by
+running the seeds in parallel worker processes, which share one GPU for flow
+training. It was used to compute the results in `results/` with fdfi 0.2.1:
+
+```bash
+cd simulation
+python rerun_parallel.py benchmark --workers 50 --threads 4              # DFI-OT, DFI-EOT, FDFI
+python rerun_parallel.py benchmark --baselines --workers 50 --threads 4  # LOCO, CPI
+python rerun_parallel.py runtime    # OT, EOT and FDFI times for Figure 2
+python rerun_parallel.py merge      # update results/ and draw Figures 1, 2 and 8
+```
+
+- `--workers` sets the number of worker processes and `--threads` the number
+  of CPU threads of each worker. Each worker runs the full design for its share
+  of the 50 seeds.
+- `runtime` runs sequentially, as in `run_benchmark.py`, because it records
+  wall-clock times. Run it on an otherwise idle machine. It times only OT, EOT
+  and FDFI; the times of the other methods are kept from
+  `results/runtime_results.csv`.
+- `merge` replaces the rows of every method that was rerun in `results/` and
+  keeps the other rows.
+- Intermediate results are written to `rerun/parallel/`.
+
+On the server described above, with 50 workers of 4 threads, the benchmark took
+about 3.5 hours for DFI-OT, DFI-EOT and FDFI and about 45 minutes for LOCO and
+CPI. The runtime step took RUNTIME_TBD.
