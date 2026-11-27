@@ -16,7 +16,7 @@ Typical inputs come directly from explainer results:
    ci = explainer.conf_int(alpha=0.05, target="X")
    feature_names = [f"X{i}" for i in range(X_test.shape[1])]
 
-   summary_bar(results["phi_X"], results["se_X"], feature_names, show=False)
+   summary_bar(results.get_phi_X(), results.get_se_X(), feature_names, show=False)
    summary_plot(explainer.ueifs_X, features=X_test, feature_names=feature_names, show=False)
    confidence_interval_plot(ci, feature_names=feature_names, show=False)
    diagnostics_plot(explainer.diagnostics, feature_names=feature_names, show=False)
@@ -27,7 +27,7 @@ Global Importance
 .. autofunction:: fdfi.plots.summary_bar
 
 ``summary_bar`` is the public global bar-chart API for aggregate arrays such as
-``results["phi_X"]`` and ``results["phi_Z"]``. It sorts features by absolute
+``results.get_phi_X()`` and ``results.get_phi_Z()``. It sorts features by absolute
 importance, sanitizes missing or infinite standard errors, supports optional
 feature-color mappings, and returns the sorted table used for plotting.
 
@@ -87,7 +87,7 @@ Inference and Diagnostics
 
 .. autofunction:: fdfi.plots.confidence_interval_plot
 
-``confidence_interval_plot`` accepts dictionaries returned by ``conf_int()``,
+``confidence_interval_plot`` accepts result objects returned by ``conf_int()``,
 including feature-level and grouped outputs.
 
 **One-sided confidence intervals** (added in 0.0.8)

@@ -61,32 +61,13 @@ continuous data problems.
 How do I handle categorical features?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Use EOTExplainer with Gower distance:
-
-.. code-block:: python
-
-   from fdfi.explainers import EOTExplainer
-
-   explainer = EOTExplainer(
-       model.predict,
-       data=X_train,
-       cost_metric="gower",  # or "auto"
-       categorical_threshold=10,  # Features with ≤10 unique values = categorical
-   )
-
-You can also manually specify feature types:
-
-.. code-block:: python
-
-   import numpy as np
-   feature_types = np.array(["continuous", "binary", "categorical", "continuous"])
-   
-   explainer = EOTExplainer(
-       model.predict,
-       data=X_train,
-       cost_metric="gower",
-       feature_types=feature_types,
-   )
+The explainers whiten the features and use the quadratic cost, so every
+feature is treated as continuous.  Binary or ordinal features can be included
+as numeric columns, but the Gaussian disentangling map is then only an
+approximation.  Nominal features with several levels should be encoded before
+fitting the model and the explainer; reporting their importance as a group
+(``conf_int(groups=...)`` or ``summary(groups=...)``) aggregates the encoded
+columns.  There is no built-in Gower or mixed-type cost.
 
 Statistical Inference Questions
 -------------------------------
@@ -101,10 +82,10 @@ Use the ``conf_int()`` method after computing importance:
    results = explainer(X_test)
    ci = explainer.conf_int(alpha=0.05, alternative="two-sided")
 
-   print("Estimates:", ci["score"])
-   print("CI Lower:", ci["ci_lower"])
-   print("CI Upper:", ci["ci_upper"])
-   print("P-values:", ci["pvalue"])
+   print("Estimates:", ci.get_score())
+   print("CI Lower:", ci.get_ci_lower())
+   print("CI Upper:", ci.get_ci_upper())
+   print("P-values:", ci.get_pvalue())
 
 What is the variance floor?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -160,8 +141,8 @@ Pass ``multitest_method`` to :meth:`~fdfi.explainers.Explainer.conf_int`:
 .. code-block:: python
 
    ci = explainer.conf_int(alpha=0.05, multitest_method="fdr_bh")
-   # ci["pvalue_adj"] contains Benjamini-Hochberg adjusted p-values
-   # ci["reject_null"] reflects the adjusted decision
+   # ci.get_pvalue_adj() contains Benjamini-Hochberg adjusted p-values
+   # ci.get_reject_null() reflects the adjusted decision
 
 Performance Questions
 ---------------------
@@ -184,15 +165,18 @@ How can I speed up explanation?
       explainer = OTExplainer(model, data=X_bg)
 
 3. **Use a cheaper explainer**: ``OTExplainer`` has a closed-form transport map
-   and is substantially faster than ``EOTExplainer`` (Sinkhorn iterations) or
-   ``FlowExplainer`` (flow training).
+   and is faster than ``EOTExplainer`` (several coupling draws per
+   evaluation) or ``FlowExplainer`` (flow training).
 
 Why is EOTExplainer slower than OTExplainer?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-EOTExplainer uses **Sinkhorn iterations** to solve the entropic OT problem, 
-which requires O(n²) cost matrix computation and iterative optimization. 
-OTExplainer uses a closed-form Gaussian solution.
+Both use closed-form Gaussian maps, but the entropic coupling is random, so
+EOTExplainer averages the model over draws from the coupling.  For the squared
+error ``method="cpi"`` costs about twice as many model evaluations as
+OTExplainer, and ``n_eta`` times as many for other losses.
+``method="scpi"`` uses one draw per counterfactual replicate and costs about
+the same as OTExplainer.
 
 Troubleshooting
 ---------------
