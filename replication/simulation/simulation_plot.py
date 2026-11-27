@@ -1,4 +1,4 @@
-"""Generate the two 2x3 benchmarks and D3-style runtime figure from CSVs."""
+"""Draw the benchmark figures (Figures 1 and 8) and the runtime figure (Figure 2) from CSVs."""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ def _benchmark_figure(summary: pd.DataFrame, version: str, path: Path) -> None:
 
 
 def _runtime_figure(runtime_summary: pd.DataFrame, path: Path) -> None:
-    """Match reference D3: methods on x, sample size series, log-time y."""
+    """Runtime panel: methods on x, one series per sample size, log-time y."""
     fig, axis = plt.subplots(figsize=(10.5, 3.6))
     sample_sizes = sorted(runtime_summary["n"].unique())
     palette = plt.get_cmap("tab10")(np.arange(len(sample_sizes)))
@@ -125,7 +125,7 @@ def _runtime_figure(runtime_summary: pd.DataFrame, path: Path) -> None:
 
 
 def create_runtime_figure(runtime_summary_path: Path, figures_dir: Path) -> Path:
-    """Render the standalone D3-style computational-cost figure from its CSV."""
+    """Render the computational-cost figure (Figure 2) from its CSV."""
     runtime_summary = pd.read_csv(runtime_summary_path)
     runtime_required = {
         "n", "method", "mean_runtime_seconds", "std_runtime_seconds",

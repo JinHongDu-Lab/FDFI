@@ -63,8 +63,8 @@ QUICK_RUNTIME_N_VALUES = (40, 60)
 FULL_RUNTIME_REPETITIONS = 10
 REVIEW_RUNTIME_REPETITIONS = 1
 QUICK_RUNTIME_REPETITIONS = 1
-# Matches the Appendix D.4 / Figure D3 sample-size grid and the 16 successful
-# server repetitions used by the current manuscript figure.
+# Sample-size grid and 16 repetitions of the runtime study (Appendix B.3,
+# Figure 2).
 D3_RUNTIME_N_VALUES = (200, 400, 600, 800, 1000)
 D3_RUNTIME_REPETITIONS = 16
 RUNTIME_DIMENSION = 50
@@ -104,17 +104,17 @@ def settings(mode: str) -> dict[str, object]:
         "benchmark_requirement": {
             "cpi_figure": ["LOCO", "CPI", "DFI-OT", "DFI-EOT", "FDFI"],
             "scpi_figure": ["LOCO", "CPI", "DFI-OT", "DFI-EOT", "FDFI"],
-            "runtime_figure": "one D3-style single-panel computational-cost figure",
+            "runtime_figure": "one single-panel computational-cost figure (Figure 2)",
         },
         "mode": mode,
         "execution_stage": (
             "quick_smoke_test"
             if quick
-            else "professor_fifty_seed_validation"
+            else "fifty_seed"
             if fifty_seed
-            else "professor_one_seed_consistency_check"
+            else "one_seed_check"
             if one_seed
-            else "professor_review_stage_1" if review else "formal_manuscript"
+            else "review" if review else "formal_manuscript"
         ),
         "master_seed": MASTER_SEED,
         "alpha": ALPHA,
@@ -198,11 +198,11 @@ def runtime_settings(mode: str) -> dict[str, object]:
         "execution_stage": (
             "quick_smoke_test"
             if quick
-            else "professor_fifty_seed_validation"
+            else "fifty_seed"
             if fifty_seed
-            else "professor_one_seed_consistency_check"
+            else "one_seed_check"
             if one_seed
-            else "professor_review_stage_1"
+            else "review"
             if review
             else "paper_figure_d3_reproduction" if d3 else "formal_manuscript"
         ),
@@ -1035,7 +1035,7 @@ def _benchmark_mask(
 
 
 def summarize_runtime(runtime_results: pd.DataFrame) -> pd.DataFrame:
-    """Return D3 plotting statistics: mean runtime and SD over seeds."""
+    """Return the Figure 2 statistics: mean runtime and SD over seeds."""
     successful = runtime_results.loc[runtime_results["status"] == "SUCCESS"].copy()
     rows = []
     for (n, method), frame in successful.groupby(["n", "method"], sort=False):

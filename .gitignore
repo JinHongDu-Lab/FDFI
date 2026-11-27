@@ -211,3 +211,6 @@ plan/
 .DS_Store
 .DS_Store
 GEMINI.md
+
+# Simulation reruns and checkpoints
+replication/simulation/rerun/

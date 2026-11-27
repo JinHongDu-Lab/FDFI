@@ -63,6 +63,10 @@ def rerun_runtime(results, work, seeds):
         simulation.D3_RUNTIME_REPETITIONS = seeds
 
     simulation.run_runtime_experiment("d3", work, work, work)
+    runtime = pd.read_csv(work / "simulation_runtime_results.csv")
+    failed = runtime[runtime["status"] != "SUCCESS"]
+    if len(failed):
+        raise SystemExit(f"{len(failed)} failed rows, e.g. {failed['error'].iloc[0]}")
     for name in ("results", "summary"):
         pd.read_csv(work / f"simulation_runtime_{name}.csv").to_csv(
             results / f"runtime_{name}.csv", index=False)
@@ -94,12 +98,15 @@ def main():
     results = out / "results"
     if args.rerun:
         results.mkdir(parents=True, exist_ok=True)
+        # Checkpoints are kept per seed count, so a short check run does not
+        # block a later full run (each run validates its saved settings).
+        tag = f"_{args.seeds}seeds" if args.seeds else ""
         if args.rerun in ("all", "benchmark"):
-            work = out / "checkpoints" / "benchmark"
+            work = out / "checkpoints" / f"benchmark{tag}"
             work.mkdir(parents=True, exist_ok=True)
             rerun_benchmark(results, work, args.seeds)
         if args.rerun in ("all", "runtime"):
-            work = out / "checkpoints" / "runtime"
+            work = out / "checkpoints" / f"runtime{tag}"
             work.mkdir(parents=True, exist_ok=True)
             rerun_runtime(results, work, args.seeds)
     plot(results, out / "figures")

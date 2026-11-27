@@ -4,12 +4,19 @@
 Case 1 (Section 4): EOTExplainer on the HIV sens50 data.
 Case 2 (Section 5): FlowExplainer on the CTG data (Figures 3-7).
 
-Run from the case_study/ folder:
+Run with
 
     python case_studies.py
 
-Figures are saved to figures/ and tables to outputs/.
+from any folder. Data are read from data/, figures are saved to figures/ and
+tables to outputs/, all next to this script. The flow is trained on the CPU,
+as for the reported results; set CUDA_VISIBLE_DEVICES to use a GPU instead.
 """
+
+import os
+
+# Train on the CPU unless the user chooses a GPU (results differ slightly).
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import time
 import warnings
@@ -49,9 +56,10 @@ print(f"fdfi {fdfi.__version__}")
 print(f"python {platform.python_version()}, numpy {np.__version__}, "
       f"pandas {pd.__version__}, scikit-learn {sklearn.__version__}")
 
-FIG_DIR = Path("figures")
+HERE = Path(__file__).resolve().parent
+FIG_DIR = HERE / "figures"
 FIG_DIR.mkdir(exist_ok=True)
-OUT_DIR = Path("outputs")
+OUT_DIR = HERE / "outputs"
 OUT_DIR.mkdir(exist_ok=True)
 
 
@@ -60,20 +68,12 @@ OUT_DIR.mkdir(exist_ok=True)
 # =============================================================================
 
 # Data and feature groups
-DATA_DIR = Path("data")
+DATA_DIR = HERE / "data"
 
 DATASETS = {
     "sens50": {
         "file": DATA_DIR / "sens50_processed_dataset.csv",
         "target": "sens50",
-    },
-    "sens80": {
-        "file": DATA_DIR / "sens80_processed_dataset.csv",
-        "target": "sens80",
-    },
-    "ic50": {
-        "file": DATA_DIR / "ic50.censored_processed_dataset.csv",
-        "target": "ic50.censored",
     },
 }
 
